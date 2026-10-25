@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>เข้าสู่ระบบ - ZeroHub</title>
   <link rel="icon" href="favicon.png">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -24,11 +25,11 @@
         <form data-demo="ตัวอย่าง: ยังไม่ได้เชื่อมระบบล็อกอิน">
           <div class="field">
             <label for="username">ชื่อผู้ใช้</label>
-            <div class="input-wrap"><span>👤</span><input class="input" id="username" placeholder="Username" required></div>
+            <div class="input-wrap"><span><i class="fa-solid fa-user"></i></span><input class="input" id="username" placeholder="Username" required></div>
           </div>
           <div class="field">
             <label for="password">รหัสผ่าน</label>
-            <div class="input-wrap"><span>🔒</span><input class="input" id="password" type="password" placeholder="Password" required></div>
+            <div class="input-wrap"><span><i class="fa-solid fa-lock"></i></span><input class="input" id="password" type="password" placeholder="Password" required></div>
           </div>
           <div class="row-between">
             <label class="check"><input type="checkbox"> จดจำฉัน</label>
@@ -37,7 +38,7 @@
           <button class="btn btn-primary btn-block btn-lg">เข้าสู่ระบบ</button>
         </form>
         <div class="divider">หรือ</div>
-        <button class="btn btn-ghost btn-block" onclick="showToast('ตัวอย่าง: ยังไม่ได้เชื่อม Discord')">💬 เข้าสู่ระบบด้วย Discord</button>
+        <button class="btn btn-ghost btn-block" onclick="showToast('ตัวอย่าง: ยังไม่ได้เชื่อม Discord')"><i class="fa-brands fa-discord"></i> เข้าสู่ระบบด้วย Discord</button>
         <p class="auth-foot">ยังไม่มีบัญชี? <a href="register.html">สมัครสมาชิก</a></p>
       </div>
     </div>

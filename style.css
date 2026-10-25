@@ -155,7 +155,18 @@ main.page-in { animation: pageIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .brand-text small { display: block; font-size: 0.6rem; font-style: normal; font-weight: 500; letter-spacing: 3px; color: var(--muted); margin-top: 3px; }
 
 .nav-links { display: flex; align-items: center; gap: 4px; list-style: none; }
-.nav-links a { position: relative; display: block; padding: 10px 16px; color: var(--muted); font-size: 0.95rem; transition: 0.25s; }
+.nav-links a { position: relative; display: flex; align-items: center; gap: 8px; padding: 10px 16px; color: var(--muted); font-size: 0.95rem; transition: 0.25s; }
+.nav-links a i { font-size: 0.85rem; opacity: 0.75; transition: 0.25s; }
+.nav-links a:hover i, .nav-links a.active i { color: var(--accent); opacity: 1; filter: drop-shadow(0 0 6px rgba(255, 30, 30, 0.7)); }
+.footer ul a { display: inline-flex; align-items: center; gap: 10px; }
+.footer ul a i { width: 16px; text-align: center; color: var(--accent); opacity: 0.8; }
+.card .icon i { color: #fff; }
+.float-card .fc-icon i, .method .m-icon i { color: var(--accent-2); }
+.contact-item .icon .fa-discord { font-size: 1.3rem; }
+.toast { display: inline-flex; align-items: center; gap: 10px; }
+.toast i { color: var(--accent); font-size: 1.1rem; }
+.stars i { margin-right: 3px; }
+.input-wrap > span i { font-size: 0.9rem; color: var(--muted); }
 .nav-links a::after {
   content: "";
   position: absolute;
@@ -386,7 +397,7 @@ main.page-in { animation: pageIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .marquee-track { display: flex; gap: 48px; width: max-content; animation: marquee 32s linear infinite; }
 .marquee.alt .marquee-track { animation-direction: reverse; }
 .marquee-track span { font-family: var(--display); font-style: italic; font-weight: 900; font-size: 1.35rem; letter-spacing: 1px; text-transform: uppercase; display: flex; align-items: center; gap: 48px; white-space: nowrap; }
-.marquee-track span::after { content: "✦"; font-style: normal; opacity: 0.8; }
+.marquee-track span::after { content: "\f005"; font: var(--fa-font-solid); font-size: 0.9rem; opacity: 0.8; }
 @keyframes marquee { to { transform: translateX(-50%); } }
 
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
@@ -542,7 +553,7 @@ main.page-in { animation: pageIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .showcase > div > p { color: var(--muted); margin-bottom: 24px; }
 .checks { list-style: none; display: grid; gap: 14px; margin-bottom: 28px; }
 .checks li { display: flex; gap: 14px; align-items: flex-start; }
-.checks li::before { content: "✓"; flex: 0 0 28px; height: 28px; display: grid; place-items: center; font-weight: 700; font-size: 0.85rem; background: var(--accent); clip-path: var(--cut); box-shadow: 0 0 14px rgba(255, 30, 30, 0.6); }
+.checks li::before { content: "\f00c"; font: var(--fa-font-solid); flex: 0 0 28px; height: 28px; display: grid; place-items: center; font-size: 0.8rem; background: var(--accent); clip-path: var(--cut); box-shadow: 0 0 14px rgba(255, 30, 30, 0.6); }
 .checks b { display: block; }
 .checks span { color: var(--muted); font-size: 0.92rem; }
 
@@ -666,7 +677,7 @@ textarea.input { resize: vertical; min-height: 130px; }
 .faq details[open] { border-color: rgba(255, 30, 30, 0.5); }
 .faq summary { cursor: pointer; font-weight: 500; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
 .faq summary::-webkit-details-marker { display: none; }
-.faq summary::after { content: "+"; color: var(--accent); font-size: 1.4rem; line-height: 1; transition: 0.25s; }
+.faq summary::after { content: "\2b"; font: var(--fa-font-solid); color: var(--accent); font-size: 1.1rem; line-height: 1.5; transition: 0.25s; }
 .faq details[open] summary::after { transform: rotate(45deg); }
 .faq details p { color: var(--muted); margin-top: 12px; }
 

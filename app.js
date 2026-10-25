@@ -1,22 +1,26 @@
 const NAV_LINKS = [
-  { href: "index.html", label: "หน้าหลัก" },
-  { href: "topup.html", label: "เติมเงิน" },
-  { href: "shop.html", label: "ร้านค้า" },
-  { href: "howto.html", label: "วิธีใช้" },
-  { href: "contact.html", label: "ติดต่อ" },
+  { href: "./", label: "หน้าหลัก", icon: "house" },
+  { href: "topup.html", label: "เติมเงิน", icon: "coins" },
+  { href: "shop.html", label: "ร้านค้า", icon: "store" },
+  { href: "howto.html", label: "วิธีใช้", icon: "book-open" },
+  { href: "contact.html", label: "ติดต่อ", icon: "headset" },
 ];
 
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+if (location.pathname.endsWith("/index.html")) {
+  history.replaceState(history.state, "", location.pathname.slice(0, -"index.html".length) + location.search + location.hash);
+}
+
 function currentPage() {
   const file = location.pathname.split("/").pop();
-  return file === "" ? "index.html" : file;
+  return file === "" || file === "index.html" ? "./" : file;
 }
 
 function renderChrome() {
   const page = currentPage();
   const links = NAV_LINKS.map(
-    (l) => `<li><a href="${l.href}" class="${l.href === page ? "active" : ""}">${l.label}</a></li>`
+    (l) => `<li><a href="${l.href}" class="${l.href === page ? "active" : ""}"><i class="fa-solid fa-${l.icon}"></i>${l.label}</a></li>`
   ).join("");
 
   document.body.insertAdjacentHTML(
@@ -27,15 +31,15 @@ function renderChrome() {
     <div class="cursor-glow" id="cursorGlow"></div>
     <nav class="navbar" id="navbar">
       <div class="container">
-        <a href="index.html" class="brand">
+        <a href="./" class="brand">
           <img src="logo-sm.webp" alt="ZeroHub">
           <div class="brand-text">ZERO <b>HUB</b><small>SCRIPT &amp; TOOLS</small></div>
         </a>
         <ul class="nav-links" id="navLinks">${links}</ul>
         <div class="nav-actions">
-          <a href="login.html" class="btn btn-ghost">เข้าสู่ระบบ</a>
-          <a href="register.html" class="btn btn-primary">สมัครสมาชิก</a>
-          <button class="menu-toggle" id="menuToggle" aria-label="เมนู">☰</button>
+          <a href="login.html" class="btn btn-ghost"><i class="fa-solid fa-right-to-bracket"></i>เข้าสู่ระบบ</a>
+          <a href="register.html" class="btn btn-primary"><i class="fa-solid fa-user-plus"></i>สมัครสมาชิก</a>
+          <button class="menu-toggle" id="menuToggle" aria-label="เมนู"><i class="fa-solid fa-bars"></i></button>
         </div>
       </div>
     </nav>`
@@ -47,7 +51,7 @@ function renderChrome() {
       <div class="container">
         <div class="footer-grid">
           <div>
-            <a href="index.html" class="brand">
+            <a href="./" class="brand">
               <img src="logo-sm.webp" alt="">
               <div class="brand-text">ZERO <b>HUB</b><small>SCRIPT &amp; TOOLS</small></div>
             </a>
@@ -55,24 +59,24 @@ function renderChrome() {
           </div>
           <div>
             <h4>เมนู</h4>
-            <ul>${NAV_LINKS.map((l) => `<li><a href="${l.href}">${l.label}</a></li>`).join("")}</ul>
+            <ul>${NAV_LINKS.map((l) => `<li><a href="${l.href}"><i class="fa-solid fa-${l.icon}"></i>${l.label}</a></li>`).join("")}</ul>
           </div>
           <div>
             <h4>บัญชี</h4>
             <ul>
-              <li><a href="login.html">เข้าสู่ระบบ</a></li>
-              <li><a href="register.html">สมัครสมาชิก</a></li>
-              <li><a href="contact.html">แจ้งปัญหา</a></li>
+              <li><a href="login.html"><i class="fa-solid fa-right-to-bracket"></i>เข้าสู่ระบบ</a></li>
+              <li><a href="register.html"><i class="fa-solid fa-user-plus"></i>สมัครสมาชิก</a></li>
+              <li><a href="contact.html"><i class="fa-solid fa-circle-exclamation"></i>แจ้งปัญหา</a></li>
             </ul>
           </div>
         </div>
         <div class="footer-bottom">
           <span>© ${new Date().getFullYear()} ZeroHub. All rights reserved.</span>
-          <span>Made with <span class="text-red">♥</span> for Roblox players</span>
+          <span>Made with <i class="fa-solid fa-heart text-red"></i> for Roblox players</span>
         </div>
       </div>
     </footer>
-    <button class="to-top" id="toTop" aria-label="กลับขึ้นด้านบน">↑</button>
+    <button class="to-top" id="toTop" aria-label="กลับขึ้นด้านบน"><i class="fa-solid fa-arrow-up"></i></button>
     <div class="toast" id="toast"></div>`
   );
 
@@ -221,9 +225,11 @@ function setupTyped() {
 }
 
 let toastTimer;
-function showToast(message) {
+function showToast(message, icon = "circle-info") {
   const toast = document.getElementById("toast");
-  toast.textContent = message;
+  const i = document.createElement("i");
+  i.className = `fa-solid fa-${icon}`;
+  toast.replaceChildren(i, document.createTextNode(message));
   toast.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove("show"), 2400);
@@ -235,9 +241,9 @@ function setupCopyButtons() {
       const text = document.getElementById(btn.dataset.copy).textContent;
       try {
         await navigator.clipboard.writeText(text);
-        showToast("✓ คัดลอกสคริปต์แล้ว");
+        showToast("คัดลอกสคริปต์แล้ว", "circle-check");
       } catch {
-        showToast("คัดลอกไม่สำเร็จ ลองกดค้างแล้วคัดลอกเอง");
+        showToast("คัดลอกไม่สำเร็จ ลองกดค้างแล้วคัดลอกเอง", "triangle-exclamation");
       }
     });
   });
@@ -274,7 +280,7 @@ function setupShopFilter() {
     });
   }
   document.querySelectorAll("[data-buy]").forEach((btn) => {
-    btn.addEventListener("click", () => showToast(`ตัวอย่าง: ซื้อ ${btn.dataset.buy} (ยังไม่มีระบบหลังบ้าน)`));
+    btn.addEventListener("click", () => showToast(`ตัวอย่าง: ซื้อ ${btn.dataset.buy} (ยังไม่มีระบบหลังบ้าน)`, "cart-shopping"));
   });
 }
 
@@ -392,7 +398,7 @@ function setupRouter() {
   document.addEventListener("touchstart", prefetch, { passive: true });
   addEventListener("popstate", () => navigate(location.href, false));
   const warm = () => {
-    ["index.html", "topup.html", "shop.html", "howto.html", "contact.html", "login.html", "register.html"].forEach((p) =>
+    ["./", "topup.html", "shop.html", "howto.html", "contact.html", "login.html", "register.html"].forEach((p) =>
       fetchPage(new URL(p, location.href).href).catch(() => {})
     );
     ["mascot.webp", "mascot-2.webp", "logo.webp"].forEach((src) => { new Image().src = src; });
