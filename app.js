@@ -6,7 +6,7 @@ const NAV_LINKS = [
 ];
 
 const DISCORD_URL = "https://discord.gg/CYxyhhBNba";
-const CONTACT_API = "";
+const CONTACT_API = "https://zerohub-contact.onrender.com/api/contact";
 const SUPABASE_URL = "";
 const SUPABASE_ANON_KEY = "";
 
