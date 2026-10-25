@@ -163,6 +163,10 @@ main.page-in { animation: pageIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .card .icon i { color: #fff; }
 .float-card .fc-icon i, .method .m-icon i { color: var(--accent-2); }
 .contact-item .icon .fa-discord { font-size: 1.3rem; }
+.nav-discord { padding: 12px 14px; font-size: 1.1rem; }
+.mobile-only { display: none; }
+@media (max-width: 860px) { .nav-links .mobile-only { display: block; } }
+.nav-discord:hover { color: #5865f2; }
 .toast { display: inline-flex; align-items: center; gap: 10px; }
 .toast i { color: var(--accent); font-size: 1.1rem; }
 .stars i { margin-right: 3px; }
@@ -539,6 +543,12 @@ main.page-in { animation: pageIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .price { font-family: var(--display); font-style: italic; font-weight: 900; font-size: 1.6rem; color: #fff; }
 .price small { font-size: 0.9rem; color: var(--accent); }
 .tag { font-size: 0.75rem; padding: 3px 10px; border-radius: 999px; background: rgba(62, 224, 143, 0.12); color: var(--success); border: 1px solid rgba(62, 224, 143, 0.35); white-space: nowrap; }
+.tag.free { background: rgba(255, 30, 30, 0.14); color: #ffd0d0; border-color: rgba(255, 30, 30, 0.5); font-size: 0.85rem; padding: 5px 14px; }
+.loader-card { margin-bottom: 34px; border-color: rgba(255, 30, 30, 0.45); box-shadow: 0 0 40px rgba(255, 30, 30, 0.12); }
+.loader-card-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.loader-card-head .icon { margin: 0; }
+.loader-card-head > div:nth-child(2) { flex: 1; min-width: 200px; }
+.loader-card .code-box { margin-top: 18px; }
 .tag.off { background: rgba(255, 107, 107, 0.12); color: var(--danger); border-color: rgba(255, 107, 107, 0.35); }
 
 .filters { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 34px; }

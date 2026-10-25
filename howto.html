@@ -20,19 +20,19 @@
 
     <section class="container" style="max-width:800px">
       <div class="steps">
-        <div class="card step reveal"><div><h3>สมัครสมาชิก</h3><p>สร้างบัญชีที่หน้า <a href="register">สมัครสมาชิก</a></p></div></div>
-        <div class="card step reveal"><div><h3>เติมเงิน</h3><p>เติมเครดิตผ่านซองอั่งเปาหรือพร้อมเพย์ที่หน้า <a href="topup">เติมเงิน</a></p></div></div>
-        <div class="card step reveal"><div><h3>ซื้อสคริปต์</h3><p>เลือกแมพที่ต้องการใน <a href="shop">ร้านค้า</a> ระบบจะให้ key ประจำบัญชี</p></div></div>
         <div class="card step reveal">
           <div style="min-width:0;flex:1">
-            <h3>รันสคริปต์</h3>
-            <p>เปิด executor แล้ววางสคริปต์นี้ โดยใส่ key ของคุณ</p>
+            <h3>คัดลอกสคริปต์</h3>
+            <p>กดคัดลอกบรรทัดด้านล่าง ใช้ตัวเดียวได้ทุกแมพ</p>
             <div class="code-box">
-              <code id="keyScript">getgenv().Key = "YOUR-KEY"; loadstring(game:HttpGet("https://your-api.onrender.com/api/script/ZeroHub"))()</code>
-              <button class="btn btn-primary copy-btn" data-copy="keyScript">คัดลอก</button>
+              <code id="howtoScript">loadstring(game:HttpGet("https://zero-hub-api.onrender.com/api/script/ZeroHub"))()</code>
+              <button class="btn btn-primary copy-btn" data-copy="howtoScript"><i class="fa-regular fa-copy"></i>คัดลอก</button>
             </div>
           </div>
         </div>
+        <div class="card step reveal"><div><h3>เข้าแมพที่รองรับ</h3><p>เข้าเกม Anime Zero, All Star Tower Defense หรือ Break and Steal an Egg ดูรายชื่อทั้งหมดได้ที่หน้า <a href="scripts">สคริปต์</a></p></div></div>
+        <div class="card step reveal"><div><h3>วางใน executor แล้วกดรัน</h3><p>ระบบจะตรวจแมพที่เล่นอยู่ แล้วโหลดสคริปต์ที่ถูกต้องให้อัตโนมัติ</p></div></div>
+        <div class="card step reveal"><div><h3>เข้า Discord</h3><p>รับข่าวอัปเดตและแจ้งปัญหาได้ที่ <a href="https://discord.gg/CYxyhhBNba" target="_blank" rel="noopener">Discord ของเรา</a></p></div></div>
       </div>
     </section>
 
@@ -40,9 +40,9 @@
       <div class="container faq" style="max-width:800px">
         <div class="section-title reveal"><div class="label">FAQ</div><h2><span class="th">คำถามที่พบบ่อย</span></h2></div>
         <details class="reveal"><summary>ใช้กับ executor ตัวไหนได้บ้าง?</summary><p>รองรับ executor ทั่วไปที่มีฟังก์ชัน HttpGet และ loadstring</p></details>
-        <details class="reveal"><summary>key ใช้ได้กี่เครื่อง?</summary><p>1 key ต่อ 1 บัญชี Roblox หากต้องการรีเซ็ตติดต่อทีมงาน</p></details>
+        <details class="reveal"><summary>ต้องเสียเงินไหม?</summary><p>ไม่ต้องครับ สคริปต์ทุกแมพแจกฟรี 100%</p></details>
+        <details class="reveal"><summary>รันแล้วขึ้นว่าไม่รองรับแมพนี้?</summary><p>สคริปต์รองรับเฉพาะแมพในหน้าสคริปต์ อยากให้ทำแมพไหนเพิ่ม เสนอได้ใน Discord</p></details>
         <details class="reveal"><summary>สคริปต์ไม่ทำงานต้องทำยังไง?</summary><p>เช็กว่าเกมอัปเดตหรือไม่ แล้วแจ้งในห้องซัพพอร์ตบน Discord</p></details>
-        <details class="reveal"><summary>เติมเงินแล้วเครดิตไม่เข้า?</summary><p>รอ 5 นาที ถ้ายังไม่เข้าให้ส่งหลักฐานการโอนในหน้าติดต่อหรือ Discord</p></details>
       </div>
     </section>
   </main>

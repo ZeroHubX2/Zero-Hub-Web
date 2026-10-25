@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>สคริปต์ - ZeroHub</title>
+  <link rel="icon" href="favicon.png">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header class="page-header" data-bg="SCRIPTS">
+      <div class="container reveal">
+        <div class="label">Free Scripts</div>
+        <h1>สคริปต์ทั้งหมด</h1>
+        <p>แจกฟรี 100% สคริปต์เดียวใช้ได้ทุกแมพ ระบบตรวจแมพให้อัตโนมัติ</p>
+      </div>
+    </header>
+
+    <section class="container">
+      <div class="card loader-card reveal">
+        <div class="loader-card-head">
+          <div class="icon"><i class="fa-solid fa-code"></i></div>
+          <div>
+            <h3>ZeroHub Loader</h3>
+            <p>คัดลอกบรรทัดนี้ไปวางใน executor แล้วกดรันในแมพที่รองรับ</p>
+          </div>
+          <span class="tag free"><i class="fa-solid fa-gift"></i> ฟรี</span>
+        </div>
+        <div class="code-box">
+          <code id="loaderScript">loadstring(game:HttpGet("https://zero-hub-api.onrender.com/api/script/ZeroHub"))()</code>
+          <button class="btn btn-primary copy-btn" data-copy="loaderScript"><i class="fa-regular fa-copy"></i>คัดลอก</button>
+        </div>
+      </div>
+
+      <div class="filters reveal" id="shopFilters" data-group>
+        <button class="chip active" data-value="all">ทั้งหมด</button>
+        <button class="chip" data-value="anime">แนวอนิเมะ</button>
+        <button class="chip" data-value="other">อื่นๆ</button>
+      </div>
+
+      <div class="grid grid-3">
+        <div class="card product reveal" data-cat="anime">
+          <div class="product-thumb"><span class="hot">HOT</span><span>AZ</span></div>
+          <div class="product-body">
+            <div class="product-meta"><h3>Anime Zero</h3><span class="tag">ใช้งานได้</span></div>
+            <p>ออโต้ฟาร์ม ออโต้สกิล ออโต้เควส</p>
+            <div class="product-meta"><span class="price">ฟรี</span><button class="btn btn-primary" data-copy="loaderScript"><i class="fa-regular fa-copy"></i>คัดลอก</button></div>
+          </div>
+        </div>
+        <div class="card product reveal d1" data-cat="anime">
+          <div class="product-thumb"><span class="hot">NEW</span><span>ASTD</span></div>
+          <div class="product-body">
+            <div class="product-meta"><h3>All Star Tower Defense</h3><span class="tag">ใช้งานได้</span></div>
+            <p>ออโต้วางยูนิต ออโต้อัปเกรด ฟาร์มด่าน</p>
+            <div class="product-meta"><span class="price">ฟรี</span><button class="btn btn-primary" data-copy="loaderScript"><i class="fa-regular fa-copy"></i>คัดลอก</button></div>
+          </div>
+        </div>
+        <div class="card product reveal d2" data-cat="other">
+          <div class="product-thumb"><span>EGG</span></div>
+          <div class="product-body">
+            <div class="product-meta"><h3>Break and Steal an Egg</h3><span class="tag">ใช้งานได้</span></div>
+            <p>ออโต้ขโมยไข่ ออโต้ขาย</p>
+            <div class="product-meta"><span class="price">ฟรี</span><button class="btn btn-primary" data-copy="loaderScript"><i class="fa-regular fa-copy"></i>คัดลอก</button></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

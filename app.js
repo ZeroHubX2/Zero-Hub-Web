@@ -1,10 +1,11 @@
 const NAV_LINKS = [
   { href: "./", label: "หน้าหลัก", icon: "house" },
-  { href: "topup", label: "เติมเงิน", icon: "coins" },
-  { href: "shop", label: "ร้านค้า", icon: "store" },
+  { href: "scripts", label: "สคริปต์", icon: "code" },
   { href: "howto", label: "วิธีใช้", icon: "book-open" },
   { href: "contact", label: "ติดต่อ", icon: "headset" },
 ];
+
+const DISCORD_URL = "https://discord.gg/CYxyhhBNba";
 
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -39,8 +40,9 @@ function renderChrome() {
           <img src="logo-sm.webp" alt="ZeroHub">
           <div class="brand-text">ZERO <b>HUB</b><small>SCRIPT &amp; TOOLS</small></div>
         </a>
-        <ul class="nav-links" id="navLinks">${links}</ul>
+        <ul class="nav-links" id="navLinks">${links}<li class="mobile-only"><a href="login"><i class="fa-solid fa-right-to-bracket"></i>เข้าสู่ระบบ</a></li><li class="mobile-only"><a href="${DISCORD_URL}" target="_blank" rel="noopener"><i class="fa-brands fa-discord"></i>Discord</a></li></ul>
         <div class="nav-actions">
+          <a href="${DISCORD_URL}" target="_blank" rel="noopener" class="btn btn-ghost nav-discord" aria-label="Discord"><i class="fa-brands fa-discord"></i></a>
           <a href="login" class="btn btn-ghost"><i class="fa-solid fa-right-to-bracket"></i>เข้าสู่ระบบ</a>
           <a href="register" class="btn btn-primary"><i class="fa-solid fa-user-plus"></i>สมัครสมาชิก</a>
           <button class="menu-toggle" id="menuToggle" aria-label="เมนู"><i class="fa-solid fa-bars"></i></button>
@@ -70,7 +72,7 @@ function renderChrome() {
             <ul>
               <li><a href="login"><i class="fa-solid fa-right-to-bracket"></i>เข้าสู่ระบบ</a></li>
               <li><a href="register"><i class="fa-solid fa-user-plus"></i>สมัครสมาชิก</a></li>
-              <li><a href="contact"><i class="fa-solid fa-circle-exclamation"></i>แจ้งปัญหา</a></li>
+              <li><a href="${DISCORD_URL}" target="_blank" rel="noopener"><i class="fa-brands fa-discord"></i>Discord</a></li>
             </ul>
           </div>
         </div>
@@ -276,35 +278,11 @@ function setupChoiceGroups() {
 
 function setupShopFilter() {
   const filters = document.getElementById("shopFilters");
-  if (filters) {
-    filters.addEventListener("choice", (e) => {
-      document.querySelectorAll(".product").forEach((p) => {
-        p.style.display = e.detail === "all" || p.dataset.cat === e.detail ? "" : "none";
-      });
+  if (!filters) return;
+  filters.addEventListener("choice", (e) => {
+    document.querySelectorAll(".product").forEach((p) => {
+      p.style.display = e.detail === "all" || p.dataset.cat === e.detail ? "" : "none";
     });
-  }
-  document.querySelectorAll("[data-buy]").forEach((btn) => {
-    btn.addEventListener("click", () => showToast(`ตัวอย่าง: ซื้อ ${btn.dataset.buy} (ยังไม่มีระบบหลังบ้าน)`, "cart-shopping"));
-  });
-}
-
-function setupTopup() {
-  const amounts = document.getElementById("amounts");
-  if (!amounts) return;
-  const custom = document.getElementById("customAmount");
-  const update = (value) => {
-    const n = Math.max(0, Number(value) || 0);
-    document.getElementById("sumAmount").textContent = `${n.toLocaleString()} บาท`;
-    document.getElementById("sumCredit").textContent = `${n.toLocaleString()} เครดิต`;
-    document.getElementById("sumTotal").textContent = `฿${n.toLocaleString()}`;
-  };
-  amounts.addEventListener("choice", (e) => {
-    custom.value = e.detail;
-    update(e.detail);
-  });
-  custom.addEventListener("input", () => {
-    amounts.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
-    update(custom.value);
   });
 }
 
@@ -316,7 +294,6 @@ function initPage() {
   setupDemoForms();
   setupChoiceGroups();
   setupShopFilter();
-  setupTopup();
 }
 
 const pageCache = new Map();
@@ -406,7 +383,7 @@ function setupRouter() {
   document.addEventListener("touchstart", prefetch, { passive: true });
   addEventListener("popstate", () => navigate(location.href, false));
   const warm = () => {
-    ["./", "topup", "shop", "howto", "contact", "login", "register"].forEach((p) =>
+    ["./", "scripts", "howto", "contact", "login", "register"].forEach((p) =>
       fetchPage(new URL(p, location.href).href).catch(() => {})
     );
     ["mascot.webp", "mascot-2.webp", "logo.webp"].forEach((src) => { new Image().src = src; });
