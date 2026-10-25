@@ -86,7 +86,25 @@ body::after {
 
 a { color: inherit; text-decoration: none; }
 img { max-width: 100%; display: block; }
-main { flex: 1; }
+main { flex: 1; transition: opacity 0.16s ease, transform 0.16s ease; }
+main.page-leave { opacity: 0; transform: translateY(14px); }
+main.page-in { animation: pageIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes pageIn { from { opacity: 0; transform: translateY(-10px); } }
+
+.page-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  width: 0;
+  z-index: 300;
+  opacity: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, var(--accent-dark), var(--accent), #fff);
+  box-shadow: 0 0 12px var(--accent);
+}
+.page-bar.loading { opacity: 1; width: 75%; transition: width 1.4s cubic-bezier(0.1, 0.8, 0.2, 1); }
+.page-bar.done { opacity: 0; width: 100%; transition: width 0.2s ease, opacity 0.3s ease 0.2s; }
 .container { width: min(1200px, 100% - 32px); margin-inline: auto; }
 .text-red { color: var(--accent); }
 

@@ -22,6 +22,7 @@ function renderChrome() {
   document.body.insertAdjacentHTML(
     "afterbegin",
     `<div id="loader"><div class="loader-inner"><img src="logo.webp" alt=""></div></div>
+    <div class="page-bar" id="pageBar"></div>
     <canvas id="embers"></canvas>
     <div class="cursor-glow" id="cursorGlow"></div>
     <nav class="navbar" id="navbar">
@@ -80,7 +81,13 @@ function renderChrome() {
   });
 
   const hideLoader = () => document.getElementById("loader").classList.add("done");
-  if (document.readyState === "complete") setTimeout(hideLoader, 300);
+  let seen = false;
+  try {
+    seen = sessionStorage.getItem("zh-seen") === "1";
+    sessionStorage.setItem("zh-seen", "1");
+  } catch {}
+  if (seen) hideLoader();
+  else if (document.readyState === "complete") setTimeout(hideLoader, 300);
   else window.addEventListener("load", () => setTimeout(hideLoader, 300));
   setTimeout(hideLoader, 1500);
 }
@@ -200,6 +207,7 @@ function setupTyped() {
   const text = el.querySelector(".text");
   let wi = 0, ci = 0, deleting = false;
   const tick = () => {
+    if (!text.isConnected) return;
     const word = words[wi];
     ci += deleting ? -1 : 1;
     text.textContent = word.slice(0, ci);
@@ -290,15 +298,112 @@ function setupTopup() {
   });
 }
 
+function initPage() {
+  setupCardSpotlight();
+  setupReveal();
+  setupTyped();
+  setupCopyButtons();
+  setupDemoForms();
+  setupChoiceGroups();
+  setupShopFilter();
+  setupTopup();
+}
+
+const pageCache = new Map();
+
+function fetchPage(url) {
+  const key = url.split("#")[0];
+  if (!pageCache.has(key)) {
+    const req = fetch(key).then((r) => {
+      if (!r.ok) throw new Error(r.status);
+      return r.text();
+    });
+    req.catch(() => pageCache.delete(key));
+    pageCache.set(key, req);
+  }
+  return pageCache.get(key);
+}
+
+function isInternalPage(a) {
+  if (!a || a.target || a.hasAttribute("download")) return false;
+  const raw = a.getAttribute("href") || "";
+  if (raw === "" || raw.startsWith("#")) return false;
+  const url = new URL(a.href, location.href);
+  return url.origin === location.origin && /(\.html|\/)$/.test(url.pathname);
+}
+
+function updateActiveNav() {
+  const page = currentPage();
+  document.querySelectorAll("#navLinks a").forEach((a) => {
+    a.classList.toggle("active", a.getAttribute("href") === page);
+  });
+  document.getElementById("navLinks").classList.remove("open");
+}
+
+let navToken = 0;
+async function navigate(url, push = true) {
+  const token = ++navToken;
+  const main = document.querySelector("main");
+  const bar = document.getElementById("pageBar");
+  bar.className = "page-bar loading";
+  main.classList.add("page-leave");
+  try {
+    const [html] = await Promise.all([fetchPage(url), new Promise((r) => setTimeout(r, 160))]);
+    if (token !== navToken) return;
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const next = doc.querySelector("main");
+    if (!next) throw new Error("no main");
+    document.title = doc.title;
+    if (push) history.pushState({}, "", url);
+    main.className = `${next.className} page-in`;
+    main.innerHTML = next.innerHTML;
+    window.scrollTo({ top: 0, behavior: "instant" });
+    updateActiveNav();
+    initPage();
+    main.addEventListener("animationend", () => main.classList.remove("page-in"), { once: true });
+  } catch {
+    location.href = url;
+  } finally {
+    if (token === navToken) {
+      bar.className = "page-bar done";
+    }
+  }
+}
+
+function setupRouter() {
+  history.scrollRestoration = "manual";
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest("a");
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (!isInternalPage(a)) return;
+    e.preventDefault();
+    if (a.href === location.href) {
+      window.scrollTo({ top: 0 });
+      document.getElementById("navLinks").classList.remove("open");
+      return;
+    }
+    navigate(a.href);
+  });
+  const prefetch = (e) => {
+    const a = e.target.closest && e.target.closest("a");
+    if (isInternalPage(a)) fetchPage(a.href).catch(() => {});
+  };
+  document.addEventListener("pointerover", prefetch, { passive: true });
+  document.addEventListener("touchstart", prefetch, { passive: true });
+  addEventListener("popstate", () => navigate(location.href, false));
+  const warm = () => {
+    ["index.html", "topup.html", "shop.html", "howto.html", "contact.html", "login.html", "register.html"].forEach((p) =>
+      fetchPage(new URL(p, location.href).href).catch(() => {})
+    );
+    ["mascot.webp", "mascot-2.webp", "logo.webp"].forEach((src) => { new Image().src = src; });
+  };
+  if ("requestIdleCallback" in window) requestIdleCallback(warm);
+  else setTimeout(warm, 1200);
+}
+
 renderChrome();
 setupScrollEffects();
 setupEmbers();
 setupCursorGlow();
-setupCardSpotlight();
-setupReveal();
-setupTyped();
-setupCopyButtons();
-setupDemoForms();
-setupChoiceGroups();
-setupShopFilter();
-setupTopup();
+setupRouter();
+initPage();
