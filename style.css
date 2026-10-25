@@ -165,6 +165,7 @@ main.page-in { animation: pageIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .contact-item .icon .fa-discord { font-size: 1.3rem; }
 .nav-discord { padding: 12px 14px; font-size: 1.1rem; }
 .mobile-only { display: none; }
+.stats.three { grid-template-columns: repeat(3, 1fr) !important; }
 @media (max-width: 860px) { .nav-links .mobile-only { display: block; } }
 .nav-discord:hover { color: #5865f2; }
 .toast { display: inline-flex; align-items: center; gap: 10px; }
