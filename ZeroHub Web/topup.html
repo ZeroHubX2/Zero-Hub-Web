@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>เติมเงิน - ZeroHub</title>
+  <link rel="icon" href="assets/favicon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header class="page-header" data-bg="TOPUP">
+      <div class="container reveal">
+        <div class="label">Credit</div>
+        <h1>เติมเงิน</h1>
+        <p>1 บาท = 1 เครดิต ใช้ซื้อสคริปต์ในร้านค้า</p>
+      </div>
+    </header>
+
+    <section class="container topup-grid">
+      <form class="card reveal" data-demo="ตัวอย่าง: ยังไม่ได้เชื่อมระบบชำระเงิน">
+        <h3 style="margin-bottom:16px">เลือกจำนวนเงิน</h3>
+        <div class="amounts" id="amounts" data-group>
+          <button type="button" class="amount" data-value="50">฿50<small>50 เครดิต</small></button>
+          <button type="button" class="amount active" data-value="100">฿100<small>100 เครดิต</small></button>
+          <button type="button" class="amount" data-value="200">฿200<small>200 เครดิต</small></button>
+          <button type="button" class="amount" data-value="300">฿300<small>300 เครดิต</small></button>
+          <button type="button" class="amount" data-value="500">฿500<small>500 เครดิต</small></button>
+          <button type="button" class="amount" data-value="1000">฿1,000<small>1,000 เครดิต</small></button>
+        </div>
+        <div class="field">
+          <label for="customAmount">หรือกรอกจำนวนเอง</label>
+          <div class="input-wrap"><span>฿</span><input class="input" id="customAmount" type="number" min="10" value="100"></div>
+        </div>
+
+        <h3 style="margin:10px 0 14px">ช่องทางชำระเงิน</h3>
+        <div class="methods">
+          <label class="method"><input type="radio" name="method" checked><div class="m-icon">🧧</div><div>ซองอั่งเปา TrueMoney<small>วางลิงก์ซองของขวัญ</small></div></label>
+          <label class="method"><input type="radio" name="method"><div class="m-icon">📲</div><div>พร้อมเพย์ QR<small>สแกนจ่ายผ่านแอปธนาคาร</small></div></label>
+        </div>
+        <button class="btn btn-primary btn-block btn-lg">ยืนยันการเติมเงิน</button>
+      </form>
+
+      <div class="card sticky reveal d1">
+        <h3 style="margin-bottom:10px">สรุปรายการ</h3>
+        <ul class="summary">
+          <li>จำนวนเงิน <b id="sumAmount">100 บาท</b></li>
+          <li>เครดิตที่จะได้รับ <b id="sumCredit">100 เครดิต</b></li>
+          <li>ค่าธรรมเนียม <b>ฟรี</b></li>
+          <li class="total">ยอดชำระ <b id="sumTotal">฿100</b></li>
+        </ul>
+        <p style="color:var(--muted);margin-top:16px;font-size:.9rem">⏱️ เครดิตจะเข้าบัญชีภายใน 1-5 นาที หากไม่เข้าติดต่อทีมงานใน Discord</p>
+      </div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
