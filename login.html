@@ -4,6 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>เข้าสู่ระบบ - ZeroHub</title>
+  <meta name="description" content="เข้าสู่ระบบ ZeroHub">
+  <meta name="theme-color" content="#ff1e1e">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="ZeroHub">
+  <meta property="og:title" content="เข้าสู่ระบบ - ZeroHub">
+  <meta property="og:description" content="เข้าสู่ระบบ ZeroHub">
+  <meta property="og:url" content="https://zerohub-oczq.onrender.com/login">
+  <meta property="og:image" content="https://zerohub-oczq.onrender.com/og.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="favicon.png">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
   <link rel="stylesheet" href="style.css">
@@ -22,23 +33,23 @@
         <img class="auth-logo" src="logo-sm.webp" alt="">
         <h1>เข้าสู่ระบบ</h1>
         <p class="sub">กรอกข้อมูลเพื่อเข้าใช้งาน ZeroHub</p>
-        <form data-demo="ตัวอย่าง: ยังไม่ได้เชื่อมระบบล็อกอิน">
+        <form id="loginForm" novalidate>
           <div class="field">
-            <label for="username">ชื่อผู้ใช้</label>
-            <div class="input-wrap"><span><i class="fa-solid fa-user"></i></span><input class="input" id="username" placeholder="Username" required></div>
+            <label for="l-email">อีเมล</label>
+            <div class="input-wrap"><span><i class="fa-solid fa-envelope"></i></span><input class="input" id="l-email" name="email" type="email" placeholder="you@example.com" autocomplete="email" required></div>
           </div>
           <div class="field">
-            <label for="password">รหัสผ่าน</label>
-            <div class="input-wrap"><span><i class="fa-solid fa-lock"></i></span><input class="input" id="password" type="password" placeholder="Password" required></div>
+            <label for="l-password">รหัสผ่าน</label>
+            <div class="input-wrap"><span><i class="fa-solid fa-lock"></i></span><input class="input" id="l-password" name="password" type="password" placeholder="Password" autocomplete="current-password" required></div>
           </div>
           <div class="row-between">
-            <label class="check"><input type="checkbox"> จดจำฉัน</label>
-            <a href="contact">ลืมรหัสผ่าน?</a>
+            <span></span>
+            <a href="#" id="forgotLink">ลืมรหัสผ่าน?</a>
           </div>
-          <button class="btn btn-primary btn-block btn-lg">เข้าสู่ระบบ</button>
+          <button class="btn btn-primary btn-block btn-lg" type="submit"><i class="fa-solid fa-right-to-bracket"></i><span>เข้าสู่ระบบ</span></button>
         </form>
         <div class="divider">หรือ</div>
-        <button class="btn btn-ghost btn-block" onclick="showToast('ตัวอย่าง: ยังไม่ได้เชื่อม Discord')"><i class="fa-brands fa-discord"></i> เข้าสู่ระบบด้วย Discord</button>
+        <button class="btn btn-ghost btn-block" type="button" id="discordLogin"><i class="fa-brands fa-discord"></i> เข้าสู่ระบบด้วย Discord</button>
         <p class="auth-foot">ยังไม่มีบัญชี? <a href="register">สมัครสมาชิก</a></p>
       </div>
     </div>

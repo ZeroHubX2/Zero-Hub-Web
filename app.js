@@ -6,6 +6,9 @@ const NAV_LINKS = [
 ];
 
 const DISCORD_URL = "https://discord.gg/CYxyhhBNba";
+const CONTACT_API = "";
+const SUPABASE_URL = "";
+const SUPABASE_ANON_KEY = "";
 
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -40,11 +43,13 @@ function renderChrome() {
           <img src="logo-sm.webp" alt="ZeroHub">
           <div class="brand-text">ZERO <b>HUB</b><small>SCRIPT &amp; TOOLS</small></div>
         </a>
-        <ul class="nav-links" id="navLinks">${links}<li class="mobile-only"><a href="login"><i class="fa-solid fa-right-to-bracket"></i>เข้าสู่ระบบ</a></li><li class="mobile-only"><a href="${DISCORD_URL}" target="_blank" rel="noopener"><i class="fa-brands fa-discord"></i>Discord</a></li></ul>
+        <ul class="nav-links" id="navLinks">${links}<li class="mobile-only auth-guest"><a href="login"><i class="fa-solid fa-right-to-bracket"></i>เข้าสู่ระบบ</a></li><li class="mobile-only auth-user" hidden><a href="#" data-logout><i class="fa-solid fa-right-from-bracket"></i>ออกจากระบบ</a></li><li class="mobile-only"><a href="${DISCORD_URL}" target="_blank" rel="noopener"><i class="fa-brands fa-discord"></i>Discord</a></li></ul>
         <div class="nav-actions">
           <a href="${DISCORD_URL}" target="_blank" rel="noopener" class="btn btn-ghost nav-discord" aria-label="Discord"><i class="fa-brands fa-discord"></i></a>
-          <a href="login" class="btn btn-ghost"><i class="fa-solid fa-right-to-bracket"></i>เข้าสู่ระบบ</a>
-          <a href="register" class="btn btn-primary"><i class="fa-solid fa-user-plus"></i>สมัครสมาชิก</a>
+          <a href="login" class="btn btn-ghost auth-guest"><i class="fa-solid fa-right-to-bracket"></i>เข้าสู่ระบบ</a>
+          <a href="register" class="btn btn-primary auth-guest"><i class="fa-solid fa-user-plus"></i>สมัครสมาชิก</a>
+          <span class="nav-user auth-user" hidden><i class="fa-solid fa-circle-user"></i><b id="navUserName"></b></span>
+          <button class="btn btn-ghost auth-user nav-logout" type="button" data-logout hidden aria-label="ออกจากระบบ"><i class="fa-solid fa-right-from-bracket"></i></button>
           <button class="menu-toggle" id="menuToggle" aria-label="เมนู"><i class="fa-solid fa-bars"></i></button>
         </div>
       </div>
@@ -255,13 +260,147 @@ function setupCopyButtons() {
   });
 }
 
-function setupDemoForms() {
-  document.querySelectorAll("form[data-demo]").forEach((form) => {
-    form.addEventListener("submit", (e) => {
-      e.preventDefault();
-      showToast(form.dataset.demo);
+let supabasePromise;
+function getSupabase() {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return Promise.resolve(null);
+  if (!supabasePromise) {
+    supabasePromise = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js";
+      s.onload = () => resolve(window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY));
+      s.onerror = () => {
+        supabasePromise = null;
+        reject(new Error("โหลดระบบสมาชิกไม่สำเร็จ ลองรีเฟรชหน้า"));
+      };
+      document.head.appendChild(s);
     });
+  }
+  return supabasePromise;
+}
+
+const AUTH_ERRORS = {
+  "Invalid login credentials": "อีเมลหรือรหัสผ่านไม่ถูกต้อง",
+  "Email not confirmed": "ยังไม่ได้ยืนยันอีเมล เช็กกล่องจดหมายก่อนนะ",
+  "User already registered": "อีเมลนี้สมัครไว้แล้ว ลองเข้าสู่ระบบแทน",
+  "Password should be at least 6 characters.": "รหัสผ่านสั้นเกินไป",
+};
+function authError(err) {
+  const msg = (err && err.message) || "";
+  if (AUTH_ERRORS[msg]) return AUTH_ERRORS[msg];
+  if (/rate limit/i.test(msg)) return "ลองบ่อยเกินไป รอสักครู่แล้วลองใหม่";
+  if (/provider is not enabled/i.test(msg)) return "ยังไม่ได้เปิดล็อกอินด้วย Discord";
+  return msg || "เกิดข้อผิดพลาด ลองใหม่อีกครั้ง";
+}
+
+function setBusy(btn, busy, text) {
+  const label = btn.querySelector("span");
+  if (!btn.dataset.label) btn.dataset.label = label.textContent;
+  btn.classList.toggle("loading", busy);
+  label.textContent = busy ? text : btn.dataset.label;
+}
+
+function renderAuthState(user) {
+  const name = user ? (user.user_metadata && (user.user_metadata.username || user.user_metadata.full_name)) || user.email.split("@")[0] : "";
+  document.querySelectorAll(".auth-guest").forEach((el) => (el.hidden = !!user));
+  document.querySelectorAll(".auth-user").forEach((el) => (el.hidden = !user));
+  document.getElementById("navUserName").textContent = name;
+}
+
+function setupAuth() {
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-logout]");
+    if (!btn) return;
+    e.preventDefault();
+    const sb = await getSupabase();
+    if (!sb) return;
+    await sb.auth.signOut();
+    document.getElementById("navLinks").classList.remove("open");
+    showToast("ออกจากระบบแล้ว", "circle-check");
   });
+  getSupabase()
+    .then((sb) => {
+      if (!sb) return;
+      sb.auth.getSession().then(({ data }) => renderAuthState(data.session && data.session.user));
+      sb.auth.onAuthStateChange((_event, session) => renderAuthState(session && session.user));
+    })
+    .catch(() => {});
+}
+
+async function requireSupabase() {
+  try {
+    const sb = await getSupabase();
+    if (!sb) showToast("ระบบสมาชิกยังไม่เปิดใช้งาน", "circle-info");
+    return sb;
+  } catch (err) {
+    showToast(err.message, "triangle-exclamation");
+    return null;
+  }
+}
+
+function setupAuthForms() {
+  const login = document.getElementById("loginForm");
+  if (login) {
+    login.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const { email, password } = Object.fromEntries(new FormData(login));
+      if (!email.trim() || !password) return showToast("กรอกอีเมลและรหัสผ่าน", "triangle-exclamation");
+      const sb = await requireSupabase();
+      if (!sb) return;
+      const btn = login.querySelector("button[type=submit]");
+      setBusy(btn, true, "กำลังเข้าสู่ระบบ...");
+      const { error } = await sb.auth.signInWithPassword({ email: email.trim(), password });
+      setBusy(btn, false);
+      if (error) return showToast(authError(error), "triangle-exclamation");
+      showToast("เข้าสู่ระบบสำเร็จ", "circle-check");
+      navigate(new URL("./", location.href).href);
+    });
+    document.getElementById("forgotLink").addEventListener("click", async (e) => {
+      e.preventDefault();
+      const email = login.email.value.trim();
+      if (!email) return showToast("กรอกอีเมลก่อน แล้วกดลืมรหัสผ่านอีกครั้ง", "circle-info");
+      const sb = await requireSupabase();
+      if (!sb) return;
+      const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: new URL("./", location.href).href });
+      showToast(error ? authError(error) : "ส่งลิงก์รีเซ็ตรหัสผ่านไปที่อีเมลแล้ว", error ? "triangle-exclamation" : "circle-check");
+    });
+    document.getElementById("discordLogin").addEventListener("click", async () => {
+      const sb = await requireSupabase();
+      if (!sb) return;
+      const { error } = await sb.auth.signInWithOAuth({ provider: "discord", options: { redirectTo: new URL("./", location.href).href } });
+      if (error) showToast(authError(error), "triangle-exclamation");
+    });
+  }
+
+  const register = document.getElementById("registerForm");
+  if (register) {
+    register.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const f = Object.fromEntries(new FormData(register));
+      const username = (f.username || "").trim();
+      if (!username || !f.email.trim()) return showToast("กรอกชื่อผู้ใช้และอีเมล", "triangle-exclamation");
+      if (f.password.length < 8) return showToast("รหัสผ่านต้องมีอย่างน้อย 8 ตัว", "triangle-exclamation");
+      if (f.password !== f.confirm) return showToast("รหัสผ่านทั้งสองช่องไม่ตรงกัน", "triangle-exclamation");
+      if (!f.agree) return showToast("กรุณายอมรับเงื่อนไขการใช้งาน", "triangle-exclamation");
+      const sb = await requireSupabase();
+      if (!sb) return;
+      const btn = register.querySelector("button[type=submit]");
+      setBusy(btn, true, "กำลังสร้างบัญชี...");
+      const { data, error } = await sb.auth.signUp({
+        email: f.email.trim(),
+        password: f.password,
+        options: { data: { username }, emailRedirectTo: new URL("./", location.href).href },
+      });
+      setBusy(btn, false);
+      if (error) return showToast(authError(error), "triangle-exclamation");
+      register.reset();
+      if (data.session) {
+        showToast("สมัครสมาชิกสำเร็จ", "circle-check");
+        navigate(new URL("./", location.href).href);
+      } else {
+        showToast("สมัครสำเร็จ เช็กอีเมลเพื่อยืนยันบัญชี", "envelope");
+      }
+    });
+  }
 }
 
 function setupChoiceGroups() {
@@ -286,12 +425,51 @@ function setupShopFilter() {
   });
 }
 
+function setupContactForm() {
+  const form = document.getElementById("contactForm");
+  if (!form) return;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(form));
+    if (!data.name.trim() || data.message.trim().length < 5) {
+      showToast("กรอกชื่อและข้อความอย่างน้อย 5 ตัวอักษร", "triangle-exclamation");
+      return;
+    }
+    if (!CONTACT_API) {
+      showToast("ระบบส่งข้อความยังไม่เปิดใช้งาน ทักใน Discord ได้เลย", "circle-info");
+      return;
+    }
+    const btn = form.querySelector("button[type=submit]");
+    const label = btn.querySelector("span");
+    btn.classList.add("loading");
+    label.textContent = "กำลังส่ง...";
+    try {
+      const r = await fetch(CONTACT_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        signal: AbortSignal.timeout(60000),
+      });
+      const res = await r.json().catch(() => ({}));
+      if (!r.ok || !res.ok) throw new Error(res.error || "ส่งไม่สำเร็จ ลองใหม่ภายหลัง");
+      form.reset();
+      showToast("ส่งข้อความแล้ว ทีมงานจะตอบใน Discord", "circle-check");
+    } catch (err) {
+      showToast(err.name === "TimeoutError" ? "เซิร์ฟเวอร์ตอบช้า ลองใหม่อีกครั้ง" : err.message, "triangle-exclamation");
+    } finally {
+      btn.classList.remove("loading");
+      label.textContent = "ส่งข้อความ";
+    }
+  });
+}
+
 function initPage() {
+  setupContactForm();
   setupCardSpotlight();
   setupReveal();
   setupTyped();
   setupCopyButtons();
-  setupDemoForms();
+  setupAuthForms();
   setupChoiceGroups();
   setupShopFilter();
 }
@@ -397,4 +575,5 @@ setupScrollEffects();
 setupEmbers();
 setupCursorGlow();
 setupRouter();
+setupAuth();
 initPage();

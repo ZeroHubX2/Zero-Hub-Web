@@ -164,7 +164,16 @@ main.page-in { animation: pageIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .float-card .fc-icon i, .method .m-icon i { color: var(--accent-2); }
 .contact-item .icon .fa-discord { font-size: 1.3rem; }
 .nav-discord { padding: 12px 14px; font-size: 1.1rem; }
+[hidden] { display: none !important; }
+.nav-user { display: inline-flex; align-items: center; gap: 8px; padding: 10px 14px; border: 1px solid var(--border-strong); border-radius: 12px; background: rgba(255, 255, 255, 0.04); font-size: 0.92rem; max-width: 180px; }
+.nav-user i { color: var(--accent); font-size: 1.1rem; }
+.nav-user b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-logout { padding: 12px 14px; }
+@media (max-width: 860px) { .nav-logout { display: none !important; } }
+@media (max-width: 520px) { .nav-user { max-width: 120px; padding: 8px 10px; } }
 .mobile-only { display: none; }
+.hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+.btn.loading { pointer-events: none; opacity: 0.75; }
 .stats.three { grid-template-columns: repeat(3, 1fr) !important; }
 @media (max-width: 860px) { .nav-links .mobile-only { display: block; } }
 .nav-discord:hover { color: #5865f2; }

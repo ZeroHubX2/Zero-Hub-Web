@@ -4,6 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>สมัครสมาชิก - ZeroHub</title>
+  <meta name="description" content="สมัครสมาชิก ZeroHub ฟรี">
+  <meta name="theme-color" content="#ff1e1e">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="ZeroHub">
+  <meta property="og:title" content="สมัครสมาชิก - ZeroHub">
+  <meta property="og:description" content="สมัครสมาชิก ZeroHub ฟรี">
+  <meta property="og:url" content="https://zerohub-oczq.onrender.com/register">
+  <meta property="og:image" content="https://zerohub-oczq.onrender.com/og.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="favicon.png">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
   <link rel="stylesheet" href="style.css">
@@ -15,27 +26,27 @@
         <img class="auth-logo" src="logo-sm.webp" alt="">
         <h1>สมัครสมาชิก</h1>
         <p class="sub">สร้างบัญชีฟรี ไม่มีค่าใช้จ่าย</p>
-        <form data-demo="ตัวอย่าง: ยังไม่ได้เชื่อมระบบสมัครสมาชิก">
+        <form id="registerForm" novalidate>
           <div class="field">
             <label for="r-username">ชื่อผู้ใช้</label>
-            <div class="input-wrap"><span><i class="fa-solid fa-user"></i></span><input class="input" id="r-username" placeholder="Username" required></div>
+            <div class="input-wrap"><span><i class="fa-solid fa-user"></i></span><input class="input" id="r-username" name="username" placeholder="Username" maxlength="24" autocomplete="username" required></div>
           </div>
           <div class="field">
             <label for="r-email">อีเมล</label>
-            <div class="input-wrap"><span><i class="fa-solid fa-envelope"></i></span><input class="input" id="r-email" type="email" placeholder="you@example.com" required></div>
+            <div class="input-wrap"><span><i class="fa-solid fa-envelope"></i></span><input class="input" id="r-email" name="email" type="email" placeholder="you@example.com" autocomplete="email" required></div>
           </div>
           <div class="field">
             <label for="r-password">รหัสผ่าน</label>
-            <div class="input-wrap"><span><i class="fa-solid fa-lock"></i></span><input class="input" id="r-password" type="password" placeholder="อย่างน้อย 8 ตัว" minlength="8" required></div>
+            <div class="input-wrap"><span><i class="fa-solid fa-lock"></i></span><input class="input" id="r-password" name="password" type="password" placeholder="อย่างน้อย 8 ตัว" minlength="8" autocomplete="new-password" required></div>
           </div>
           <div class="field">
             <label for="r-confirm">ยืนยันรหัสผ่าน</label>
-            <div class="input-wrap"><span><i class="fa-solid fa-lock"></i></span><input class="input" id="r-confirm" type="password" placeholder="กรอกรหัสผ่านอีกครั้ง" minlength="8" required></div>
+            <div class="input-wrap"><span><i class="fa-solid fa-lock"></i></span><input class="input" id="r-confirm" name="confirm" type="password" placeholder="กรอกรหัสผ่านอีกครั้ง" minlength="8" autocomplete="new-password" required></div>
           </div>
           <div class="row-between">
-            <label class="check"><input type="checkbox" required> ยอมรับเงื่อนไขการใช้งาน</label>
+            <label class="check"><input type="checkbox" name="agree"> ยอมรับเงื่อนไขการใช้งาน</label>
           </div>
-          <button class="btn btn-primary btn-block btn-lg">สร้างบัญชี</button>
+          <button class="btn btn-primary btn-block btn-lg" type="submit"><i class="fa-solid fa-user-plus"></i><span>สร้างบัญชี</span></button>
         </form>
         <p class="auth-foot">มีบัญชีแล้ว? <a href="login">เข้าสู่ระบบ</a></p>
       </div>
