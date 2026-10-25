@@ -320,7 +320,10 @@ function setupAuth() {
   getSupabase()
     .then((sb) => {
       if (!sb) return;
-      sb.auth.getSession().then(({ data }) => renderAuthState(data.session && data.session.user));
+      sb.auth.getSession().then(({ data }) => {
+        renderAuthState(data.session && data.session.user);
+        if (location.href.endsWith("#")) history.replaceState(history.state, "", location.pathname + location.search);
+      });
       sb.auth.onAuthStateChange((_event, session) => renderAuthState(session && session.user));
     })
     .catch(() => {});
