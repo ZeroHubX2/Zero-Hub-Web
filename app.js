@@ -21,13 +21,13 @@ function renderChrome() {
 
   document.body.insertAdjacentHTML(
     "afterbegin",
-    `<div id="loader"><div class="loader-inner"><img src="assets/logo.webp" alt=""></div></div>
+    `<div id="loader"><div class="loader-inner"><img src="logo.webp" alt=""></div></div>
     <canvas id="embers"></canvas>
     <div class="cursor-glow" id="cursorGlow"></div>
     <nav class="navbar" id="navbar">
       <div class="container">
         <a href="index.html" class="brand">
-          <img src="assets/logo-sm.webp" alt="ZeroHub">
+          <img src="logo-sm.webp" alt="ZeroHub">
           <div class="brand-text">ZERO <b>HUB</b><small>SCRIPT &amp; TOOLS</small></div>
         </a>
         <ul class="nav-links" id="navLinks">${links}</ul>
@@ -47,7 +47,7 @@ function renderChrome() {
         <div class="footer-grid">
           <div>
             <a href="index.html" class="brand">
-              <img src="assets/logo-sm.webp" alt="">
+              <img src="logo-sm.webp" alt="">
               <div class="brand-text">ZERO <b>HUB</b><small>SCRIPT &amp; TOOLS</small></div>
             </a>
             <p>ศูนย์รวมสคริปต์ Roblox คุณภาพ อัปเดตไว ใช้งานง่าย ทั้งคอมและมือถือ</p>
