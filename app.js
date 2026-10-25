@@ -1,20 +1,24 @@
 const NAV_LINKS = [
   { href: "./", label: "หน้าหลัก", icon: "house" },
-  { href: "topup.html", label: "เติมเงิน", icon: "coins" },
-  { href: "shop.html", label: "ร้านค้า", icon: "store" },
-  { href: "howto.html", label: "วิธีใช้", icon: "book-open" },
-  { href: "contact.html", label: "ติดต่อ", icon: "headset" },
+  { href: "topup", label: "เติมเงิน", icon: "coins" },
+  { href: "shop", label: "ร้านค้า", icon: "store" },
+  { href: "howto", label: "วิธีใช้", icon: "book-open" },
+  { href: "contact", label: "ติดต่อ", icon: "headset" },
 ];
 
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-if (location.pathname.endsWith("/index.html")) {
-  history.replaceState(history.state, "", location.pathname.slice(0, -"index.html".length) + location.search + location.hash);
+function cleanPath(pathname) {
+  return pathname.replace(/\/index(\.html)?$/, "/").replace(/\.html$/, "");
+}
+
+if (cleanPath(location.pathname) !== location.pathname) {
+  history.replaceState(history.state, "", cleanPath(location.pathname) + location.search + location.hash);
 }
 
 function currentPage() {
   const file = location.pathname.split("/").pop();
-  return file === "" || file === "index.html" ? "./" : file;
+  return file === "" ? "./" : file;
 }
 
 function renderChrome() {
@@ -37,8 +41,8 @@ function renderChrome() {
         </a>
         <ul class="nav-links" id="navLinks">${links}</ul>
         <div class="nav-actions">
-          <a href="login.html" class="btn btn-ghost"><i class="fa-solid fa-right-to-bracket"></i>เข้าสู่ระบบ</a>
-          <a href="register.html" class="btn btn-primary"><i class="fa-solid fa-user-plus"></i>สมัครสมาชิก</a>
+          <a href="login" class="btn btn-ghost"><i class="fa-solid fa-right-to-bracket"></i>เข้าสู่ระบบ</a>
+          <a href="register" class="btn btn-primary"><i class="fa-solid fa-user-plus"></i>สมัครสมาชิก</a>
           <button class="menu-toggle" id="menuToggle" aria-label="เมนู"><i class="fa-solid fa-bars"></i></button>
         </div>
       </div>
@@ -64,9 +68,9 @@ function renderChrome() {
           <div>
             <h4>บัญชี</h4>
             <ul>
-              <li><a href="login.html"><i class="fa-solid fa-right-to-bracket"></i>เข้าสู่ระบบ</a></li>
-              <li><a href="register.html"><i class="fa-solid fa-user-plus"></i>สมัครสมาชิก</a></li>
-              <li><a href="contact.html"><i class="fa-solid fa-circle-exclamation"></i>แจ้งปัญหา</a></li>
+              <li><a href="login"><i class="fa-solid fa-right-to-bracket"></i>เข้าสู่ระบบ</a></li>
+              <li><a href="register"><i class="fa-solid fa-user-plus"></i>สมัครสมาชิก</a></li>
+              <li><a href="contact"><i class="fa-solid fa-circle-exclamation"></i>แจ้งปัญหา</a></li>
             </ul>
           </div>
         </div>
@@ -335,7 +339,8 @@ function isInternalPage(a) {
   const raw = a.getAttribute("href") || "";
   if (raw === "" || raw.startsWith("#")) return false;
   const url = new URL(a.href, location.href);
-  return url.origin === location.origin && /(\.html|\/)$/.test(url.pathname);
+  const last = url.pathname.split("/").pop();
+  return url.origin === location.origin && (!last.includes(".") || last.endsWith(".html"));
 }
 
 function updateActiveNav() {
@@ -360,7 +365,10 @@ async function navigate(url, push = true) {
     const next = doc.querySelector("main");
     if (!next) throw new Error("no main");
     document.title = doc.title;
-    if (push) history.pushState({}, "", url);
+    if (push) {
+      const u = new URL(url);
+      history.pushState({}, "", cleanPath(u.pathname) + u.search + u.hash);
+    }
     main.className = `${next.className} page-in`;
     main.innerHTML = next.innerHTML;
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -398,7 +406,7 @@ function setupRouter() {
   document.addEventListener("touchstart", prefetch, { passive: true });
   addEventListener("popstate", () => navigate(location.href, false));
   const warm = () => {
-    ["./", "topup.html", "shop.html", "howto.html", "contact.html", "login.html", "register.html"].forEach((p) =>
+    ["./", "topup", "shop", "howto", "contact", "login", "register"].forEach((p) =>
       fetchPage(new URL(p, location.href).href).catch(() => {})
     );
     ["mascot.webp", "mascot-2.webp", "logo.webp"].forEach((src) => { new Image().src = src; });
