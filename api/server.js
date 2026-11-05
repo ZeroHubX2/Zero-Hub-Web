@@ -498,7 +498,7 @@ async function truemoney(code, action) {
   try {
     data = JSON.parse(text);
   } catch {
-    throw new Error(`truemoney ${action} http ${r.status}`);
+    throw new Error(`truemoney ${action} http ${r.status} via ${TRUEMONEY_BASE.replace(/^https?:\/\//, "")}: ${text.replace(/\s+/g, " ").slice(0, 80)}`);
   }
   const status = (data.status && data.status.code) || "UNKNOWN";
   return { status, data: data.data || {} };
@@ -1309,7 +1309,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "tm-proxy-2" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
