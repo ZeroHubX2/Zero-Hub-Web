@@ -1287,7 +1287,7 @@ async function route(req, res) {
   const cors = corsHeaders(req.headers.origin || "");
   const url = new URL(req.url || "/", "http://localhost");
   const path = url.pathname.replace(/\/+$/, "") || "/";
-  const m = req.method;
+  const m = req.method === "HEAD" ? "GET" : req.method;
 
   if (m === "OPTIONS") {
     res.writeHead(204, cors);
