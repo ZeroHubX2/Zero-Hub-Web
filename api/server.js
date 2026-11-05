@@ -1028,59 +1028,50 @@ function btn(label, emoji, style, id) {
   return b;
 }
 
-async function panelMessage() {
-  let prices = "ดูราคาได้ที่เว็บร้าน";
+const TIER_ICONS = { "24h": "⚡", "3d": "🔥", "7d": "👑", lifetime: "♾️" };
+const text = (content) => ({ type: 10, content });
+const line = (big) => ({ type: 14, divider: true, spacing: big ? 2 : 1 });
+const row = (...components) => ({ type: 1, components });
+
+async function priceLines() {
   try {
-    const icons = { "24h": "⚡", "3d": "🔥", "7d": "👑", lifetime: "♾️" };
-    prices = (await getTiers()).map((t) => `${icons[t.id] || "🔑"} **${t.name}** — \`${t.price} ฿\``).join("\n");
-  } catch {}
+    return (await getTiers()).map((t) => `${TIER_ICONS[t.id] || "🔑"} **${t.name}** — \`${t.price} บาท\``).join("\n");
+  } catch {
+    return `ดูราคาได้ที่ ${SHOP_URL}`;
+  }
+}
+
+async function panelMessage() {
   return {
-    embeds: [
-      {
-        color: PANEL_COLOR,
-        author: { name: "ZERO HUB  •  KEY SYSTEM", icon_url: `${SHOP_URL}/logo-sm.webp` },
-        title: "🔑  Zero Hub Key Panel",
-        description: [
-          "**English** — Redeem your key, get the loader and manage your access.",
-          "**ไทย** — แลกคีย์ รับสคริปต์ และจัดการสิทธิ์การใช้งาน Zero Hub",
-          "",
-          "> 🎮 คีย์เดียวใช้ได้ทุกเกม  ·  ⏱️ เริ่มนับเวลาตอนใช้ครั้งแรก",
-        ].join("\n"),
-        fields: [
-          { name: "💰 ราคา / Prices", value: prices, inline: true },
-          { name: "🛒 ซื้อคีย์ / Buy", value: `[zerohub-shop.pages.dev](${SHOP_URL})\nเติมด้วยซองอั่งเปา TrueMoney\nได้คีย์ทันที 24 ชม.`, inline: true },
-        ],
-        image: { url: `${PUBLIC_URL}/assets/panel-banner.png` },
-        footer: { text: "🔒 ข้อมูลคีย์จะแสดงเฉพาะตัวคุณเท่านั้น · Only you can see your key info" },
-      },
-    ],
+    flags: 1 << 15,
     components: [
       {
-        type: 1,
+        type: 17,
+        accent_color: PANEL_COLOR,
         components: [
-          btn("Redeem Key", "🔑", 3, "zh:redeem"),
-          btn("Get Script", "📜", 1, "zh:script"),
-          btn("ซื้อคีย์ · Buy", "🛒", 5, SHOP_URL),
+          text("## Zero Hub Scripts Panel"),
+          { type: 12, items: [{ media: { url: `${PUBLIC_URL}/assets/panel-banner.png` } }] },
+          text("**English** — Redeem your key and manage Zero Hub access.\n**ไทย** — แลกคีย์ รับสคริปต์ และจัดการสิทธิ์การใช้งาน Zero Hub"),
+          line(),
+          text("### Get Started"),
+          row(btn("Redeem Key", "🔑", 3, "zh:redeem"), btn("Get Script", "📜", 1, "zh:script"), btn("ซื้อคีย์ · Buy Key", "🛒", 3, "zh:prices")),
+          row(btn("รายชื่อแมพ · Supported Maps", "🗺️", 2, "zh:games")),
+          line(),
+          text("### Manage Access"),
+          row(btn("Reset HWID", "🖥️", 2, "zh:reset"), btn("Key Info", "🔍", 2, "zh:info")),
+          line(),
+          text("🔒 ข้อมูลคีย์และบัญชีของคุณจะแสดงเฉพาะตัวคุณเท่านั้น"),
+          row(btn("Visit Website", "🌐", 5, SHOP_URL), btn("Join Discord", "💬", 5, DISCORD_INVITE)),
         ],
-      },
-      {
-        type: 1,
-        components: [
-          btn("Key Info", "🔍", 2, "zh:info"),
-          btn("Reset HWID", "🖥️", 2, "zh:reset"),
-          btn("เกมที่รองรับ · Games", "🗺️", 2, "zh:games"),
-        ],
-      },
-      {
-        type: 1,
-        components: [btn("Visit Website", "🌐", 5, SHOP_URL), btn("Join Discord", "💬", 5, DISCORD_INVITE)],
       },
     ],
   };
 }
 
 function ephemeralEmbed(embed) {
-  return { type: 4, data: { flags: 64, embeds: [{ color: PANEL_COLOR, ...embed }] } };
+  const parts = [text(`### ${embed.title}`), line(), text(embed.description)];
+  if (embed.buttons) parts.push(row(...embed.buttons));
+  return { type: 4, data: { flags: 64 | (1 << 15), components: [{ type: 17, accent_color: PANEL_COLOR, components: parts }] } };
 }
 
 function keyModal(id, title, required) {
@@ -1121,7 +1112,8 @@ async function handlePanelCommand(res, body) {
         return { content: "โพสต์แผงคีย์ในห้องนี้แล้ว ✅" };
       } catch (err) {
         console.error("panel post failed:", err.message);
-        return { content: "โพสต์ไม่สำเร็จ ให้บอทมีสิทธิ์ ดูช่อง / ส่งข้อความ / ฝังลิงก์ ในห้องนี้ แล้วลองใหม่" };
+        if (/discord 403/.test(err.message)) return { content: "โพสต์ไม่สำเร็จ ให้บอทมีสิทธิ์ ดูช่อง / ส่งข้อความ / ฝังลิงก์ ในห้องนี้ แล้วลองใหม่" };
+        return { content: `โพสต์ไม่สำเร็จ: \`${err.message.slice(0, 300)}\`` };
       }
     },
     "panel"
@@ -1146,6 +1138,22 @@ async function handlePanelButton(res, body) {
           "**วิธีใช้:** เข้าเกมที่รองรับ → รันใน executor → ใส่คีย์ในหน้าต่างโหลดเดอร์ (ใส่ครั้งเดียว ครั้งต่อไปจำให้เอง)",
           `ยังไม่มีคีย์? ซื้อได้ที่ [zerohub-shop.pages.dev](${SHOP_URL})`,
         ].join("\n"),
+      })
+    );
+  }
+  if (id === "zh:prices") {
+    return send(
+      res,
+      200,
+      ephemeralEmbed({
+        title: "🛒 ซื้อคีย์ · Buy Key",
+        description: [
+          await priceLines(),
+          "",
+          "**วิธีซื้อ:** สมัครที่เว็บ (ล็อกอินด้วย Discord ได้) → เติมพอยต์ด้วยซองอั่งเปา TrueMoney → เลือกแพ็กเกจ → ได้คีย์ทันที",
+          "-# 🎮 คีย์เดียวใช้ได้ทุกเกม · ⏱️ เวลาเริ่มนับตอนใช้ครั้งแรก · ซื้อผ่านเว็บด้วยบัญชี Discord ได้ยศ Buyer อัตโนมัติ",
+        ].join("\n"),
+        buttons: [btn("ไปที่ร้านค้า · Open Shop", "🛒", 5, `${SHOP_URL}/shop`), btn("เติมเงิน · Top up", "💰", 5, `${SHOP_URL}/topup`)],
       })
     );
   }
