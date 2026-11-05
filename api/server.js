@@ -1042,6 +1042,13 @@ async function priceLines() {
 }
 
 async function panelMessage() {
+  let tiers = [];
+  try {
+    tiers = await getTiers();
+  } catch {}
+  const priceText = tiers.length
+    ? tiers.map((t) => `${TIER_ICONS[t.id] || "🔑"} ${t.name} **\`${t.price}฿\`**`).join("  ·  ")
+    : `ดูราคาได้ที่ ${SHOP_URL}`;
   return {
     flags: 1 << 15,
     components: [
@@ -1049,19 +1056,23 @@ async function panelMessage() {
         type: 17,
         accent_color: PANEL_COLOR,
         components: [
-          text("## Zero Hub Scripts Panel"),
-          { type: 12, items: [{ media: { url: `${PUBLIC_URL}/assets/panel-banner.png` } }] },
-          text("**English** — Redeem your key and manage Zero Hub access.\n**ไทย** — แลกคีย์ รับสคริปต์ และจัดการสิทธิ์การใช้งาน Zero Hub"),
+          {
+            type: 9,
+            components: [
+              text("# ZERO HUB"),
+              text("**Script & Tools** — คีย์เดียว เล่นได้ทุกเกม\n-# One key · Every game · ได้คีย์ทันที 24 ชม."),
+            ],
+            accessory: { type: 11, media: { url: `${PUBLIC_URL}/assets/panel-logo.png?v=2` } },
+          },
+          line(true),
+          text(`**💳 แพ็กเกจคีย์**\n${priceText}\n-# ⏱️ เวลาเริ่มนับตอนใส่คีย์ครั้งแรก · ซื้อเก็บไว้ก่อนได้`),
+          row(btn("ซื้อคีย์", "🛒", 3, "zh:prices"), btn("แลกคีย์", "🎟️", 1, "zh:redeem"), btn("รับสคริปต์", "⚙️", 2, "zh:script")),
           line(),
-          text("### Get Started"),
-          row(btn("Redeem Key", "🔑", 3, "zh:redeem"), btn("Get Script", "📜", 1, "zh:script"), btn("ซื้อคีย์ · Buy Key", "🛒", 3, "zh:prices")),
-          row(btn("รายชื่อแมพ · Supported Maps", "🗺️", 2, "zh:games")),
-          line(),
-          text("### Manage Access"),
-          row(btn("Reset HWID", "🖥️", 2, "zh:reset"), btn("Key Info", "🔍", 2, "zh:info")),
-          line(),
-          text("🔒 ข้อมูลคีย์และบัญชีของคุณจะแสดงเฉพาะตัวคุณเท่านั้น"),
-          row(btn("Visit Website", "🌐", 5, SHOP_URL), btn("Join Discord", "💬", 5, DISCORD_INVITE)),
+          text("**🧰 จัดการคีย์ของคุณ**"),
+          row(btn("คีย์ของฉัน", "📋", 2, "zh:info"), btn("ย้ายเครื่อง (HWID)", "🔄", 2, "zh:reset"), btn("เกมที่รองรับ", "🎮", 2, "zh:games")),
+          { type: 12, items: [{ media: { url: `${PUBLIC_URL}/assets/panel-banner.png?v=2` } }] },
+          text("-# 🔐 ทุกปุ่มตอบกลับให้เห็นเฉพาะคุณ · Zero Hub Shop"),
+          row(btn("เว็บร้าน", "🌐", 5, SHOP_URL), btn("Discord", "💬", 5, DISCORD_INVITE)),
         ],
       },
     ],
@@ -1257,17 +1268,19 @@ function startGateway() {
   setInterval(async () => sendOp(3, await presenceData()), 60 * 1000).unref();
 }
 
-let bannerCache = null;
-function handleBanner(req, res) {
-  if (!bannerCache) {
+const ASSETS = ["panel-banner.png", "panel-logo.png"];
+const assetCache = new Map();
+function handleAsset(req, res, name) {
+  if (!ASSETS.includes(name)) return send(res, 404, { ok: false });
+  if (!assetCache.has(name)) {
     try {
-      bannerCache = require("fs").readFileSync(require("path").join(__dirname, "panel-banner.png"));
+      assetCache.set(name, require("fs").readFileSync(require("path").join(__dirname, name)));
     } catch {
       return send(res, 404, { ok: false });
     }
   }
   res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" });
-  res.end(bannerCache);
+  res.end(assetCache.get(name));
 }
 
 async function route(req, res) {
@@ -1281,7 +1294,7 @@ async function route(req, res) {
     return res.end();
   }
   if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api" }, cors);
-  if (m === "GET" && path === "/assets/panel-banner.png") return handleBanner(req, res);
+  if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
   if (m === "GET" && path === "/api/key/check") return handleKeyCheck(req, res, url);
