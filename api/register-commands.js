@@ -81,6 +81,12 @@ const commands = [
     dm_permission: false,
     options: [{ type: STRING, name: "key", description: "คีย์ (ไม่ต้องใส่ถ้ามีคีย์เดียว)" }],
   },
+  {
+    name: "panel",
+    description: "โพสต์แผงคีย์ Zero Hub ในห้องนี้ (แอดมิน)",
+    default_member_permissions: ADMIN,
+    dm_permission: false,
+  },
 ];
 
 fetch(`https://discord.com/api/v10/applications/${APP_ID}/guilds/${GUILD_ID}/commands`, {

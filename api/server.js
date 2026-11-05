@@ -715,7 +715,7 @@ async function handleUserReset(req, res, cors) {
 }
 
 let statsCache = null;
-async function handleStats(req, res, cors) {
+async function getStats() {
   if (!statsCache || Date.now() - statsCache.at > 60 * 1000) {
     const [r] = await db("rpc/shop_stats", { method: "POST", body: {} });
     statsCache = {
@@ -723,7 +723,11 @@ async function handleStats(req, res, cors) {
       data: { members: Number(r.members), sold: Number(r.sold), active: Number(r.active), games: Object.keys(SCRIPT_FILES).length - 1 },
     };
   }
-  send(res, 200, { ok: true, ...statsCache.data }, cors);
+  return statsCache.data;
+}
+
+async function handleStats(req, res, cors) {
+  send(res, 200, { ok: true, ...(await getStats()) }, cors);
 }
 
 function isAdmin(req) {
@@ -987,16 +991,275 @@ async function handleInteraction(req, res) {
     return send(res, 400, { error: "bad json" });
   }
   if (body.type === 1) return send(res, 200, { type: 1 });
+  if (body.type === 3) return handlePanelButton(res, body);
+  if (body.type === 5) return handlePanelModal(res, body);
   if (body.type !== 2) return send(res, 400, { error: "unsupported" });
-  send(res, 200, { type: 5, data: { flags: 64 } });
   const name = body.data && body.data.name;
+  if (name === "panel") return handlePanelCommand(res, body);
+  await deferred(res, body, () => runCommand(name, optionsOf(body.data), body.member, body.user), name);
+}
+
+async function deferred(res, body, work, label) {
+  send(res, 200, { type: 5, data: { flags: 64 } });
   try {
-    const out = await runCommand(name, optionsOf(body.data), body.member, body.user);
-    await finishInteraction(body.token, out);
+    await finishInteraction(body.token, await work());
   } catch (err) {
-    console.error("command failed:", name, err.message);
+    console.error("interaction failed:", label, err.message);
     await finishInteraction(body.token, { content: "เกิดข้อผิดพลาด ลองใหม่อีกครั้ง" }).catch(() => {});
   }
+}
+
+const PUBLIC_URL = env("PUBLIC_URL", "https://zerohub-contact.onrender.com").replace(/\/+$/, "");
+const DISCORD_INVITE = env("DISCORD_INVITE", "https://discord.gg/22RuqrckH");
+const LOADSTRING = `loadstring(game:HttpGet("${PUBLIC_URL}/api/script/ZeroHub"))()`;
+const PANEL_COLOR = 0xff2a4b;
+const PANEL_GAMES = [
+  ["🥚", "Break and Steal an Egg"],
+  ["⚡", "Anime Zero"],
+  ["🏰", "All Star Tower Defense"],
+  ["☣️", "Survive the Apocalypse"],
+  ["👁️", "Anime Eyes"],
+];
+
+function btn(label, emoji, style, id) {
+  const b = { type: 2, style, label, emoji: { name: emoji } };
+  if (style === 5) b.url = id;
+  else b.custom_id = id;
+  return b;
+}
+
+async function panelMessage() {
+  let prices = "ดูราคาได้ที่เว็บร้าน";
+  try {
+    const icons = { "24h": "⚡", "3d": "🔥", "7d": "👑", lifetime: "♾️" };
+    prices = (await getTiers()).map((t) => `${icons[t.id] || "🔑"} **${t.name}** — \`${t.price} ฿\``).join("\n");
+  } catch {}
+  return {
+    embeds: [
+      {
+        color: PANEL_COLOR,
+        author: { name: "ZERO HUB  •  KEY SYSTEM", icon_url: `${SHOP_URL}/logo-sm.webp` },
+        title: "🔑  Zero Hub Key Panel",
+        description: [
+          "**English** — Redeem your key, get the loader and manage your access.",
+          "**ไทย** — แลกคีย์ รับสคริปต์ และจัดการสิทธิ์การใช้งาน Zero Hub",
+          "",
+          "> 🎮 คีย์เดียวใช้ได้ทุกเกม  ·  ⏱️ เริ่มนับเวลาตอนใช้ครั้งแรก",
+        ].join("\n"),
+        fields: [
+          { name: "💰 ราคา / Prices", value: prices, inline: true },
+          { name: "🛒 ซื้อคีย์ / Buy", value: `[zerohub-shop.pages.dev](${SHOP_URL})\nเติมด้วยซองอั่งเปา TrueMoney\nได้คีย์ทันที 24 ชม.`, inline: true },
+        ],
+        image: { url: `${PUBLIC_URL}/assets/panel-banner.png` },
+        footer: { text: "🔒 ข้อมูลคีย์จะแสดงเฉพาะตัวคุณเท่านั้น · Only you can see your key info" },
+      },
+    ],
+    components: [
+      {
+        type: 1,
+        components: [
+          btn("Redeem Key", "🔑", 3, "zh:redeem"),
+          btn("Get Script", "📜", 1, "zh:script"),
+          btn("ซื้อคีย์ · Buy", "🛒", 5, SHOP_URL),
+        ],
+      },
+      {
+        type: 1,
+        components: [
+          btn("Key Info", "🔍", 2, "zh:info"),
+          btn("Reset HWID", "🖥️", 2, "zh:reset"),
+          btn("เกมที่รองรับ · Games", "🗺️", 2, "zh:games"),
+        ],
+      },
+      {
+        type: 1,
+        components: [btn("Visit Website", "🌐", 5, SHOP_URL), btn("Join Discord", "💬", 5, DISCORD_INVITE)],
+      },
+    ],
+  };
+}
+
+function ephemeralEmbed(embed) {
+  return { type: 4, data: { flags: 64, embeds: [{ color: PANEL_COLOR, ...embed }] } };
+}
+
+function keyModal(id, title, required) {
+  return {
+    type: 9,
+    data: {
+      custom_id: id,
+      title,
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 4,
+              custom_id: "key",
+              label: required ? "คีย์ของคุณ / Your key" : "คีย์ (เว้นว่างได้ถ้ามีคีย์เดียว)",
+              style: 1,
+              min_length: required ? 8 : 0,
+              max_length: 40,
+              required,
+              placeholder: "ZH-XXXX-XXXX-XXXX-XXXX",
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+async function handlePanelCommand(res, body) {
+  if (!discordIsAdmin(body.member)) return send(res, 200, { type: 4, data: { flags: 64, content: "คำสั่งนี้สำหรับแอดมินเท่านั้น" } });
+  await deferred(
+    res,
+    body,
+    async () => {
+      try {
+        await discordApi(`/channels/${body.channel_id}/messages`, "POST", await panelMessage());
+        return { content: "โพสต์แผงคีย์ในห้องนี้แล้ว ✅" };
+      } catch (err) {
+        console.error("panel post failed:", err.message);
+        return { content: "โพสต์ไม่สำเร็จ ให้บอทมีสิทธิ์ ดูช่อง / ส่งข้อความ / ฝังลิงก์ ในห้องนี้ แล้วลองใหม่" };
+      }
+    },
+    "panel"
+  );
+}
+
+async function handlePanelButton(res, body) {
+  const id = body.data && body.data.custom_id;
+  if (id === "zh:redeem") return send(res, 200, keyModal("zh:redeem_modal", "Redeem Key · แลกคีย์", true));
+  if (id === "zh:reset") return send(res, 200, keyModal("zh:reset_modal", "Reset HWID · ย้ายเครื่อง", false));
+  if (id === "zh:script") {
+    return send(
+      res,
+      200,
+      ephemeralEmbed({
+        title: "📜 Zero Hub Loader",
+        description: [
+          "ใช้สคริปต์นี้ตัวเดียวทุกเกม / One loader for every game",
+          "```lua",
+          LOADSTRING,
+          "```",
+          "**วิธีใช้:** เข้าเกมที่รองรับ → รันใน executor → ใส่คีย์ในหน้าต่างโหลดเดอร์ (ใส่ครั้งเดียว ครั้งต่อไปจำให้เอง)",
+          `ยังไม่มีคีย์? ซื้อได้ที่ [zerohub-shop.pages.dev](${SHOP_URL})`,
+        ].join("\n"),
+      })
+    );
+  }
+  if (id === "zh:games") {
+    return send(
+      res,
+      200,
+      ephemeralEmbed({
+        title: "🗺️ เกมที่รองรับ / Supported Games",
+        description: PANEL_GAMES.map(([e, n]) => `${e} **${n}**`).join("\n") + "\n\nคีย์เดียวใช้ได้ทุกเกม รวมถึงเกมที่จะเพิ่มในอนาคต",
+      })
+    );
+  }
+  if (id === "zh:info") return deferred(res, body, () => runCommand("mykey", {}, body.member, body.user), "panel-info");
+  send(res, 200, { type: 4, data: { flags: 64, content: "ปุ่มนี้หมดอายุแล้ว ลองใหม่อีกครั้ง" } });
+}
+
+function modalValue(body) {
+  for (const row of (body.data && body.data.components) || []) {
+    for (const c of row.components || []) if (c.custom_id === "key") return String(c.value || "").trim();
+  }
+  return "";
+}
+
+async function handlePanelModal(res, body) {
+  const id = body.data && body.data.custom_id;
+  const key = modalValue(body);
+  if (id === "zh:redeem_modal") return deferred(res, body, () => runCommand("redeem", { key }, body.member, body.user), "panel-redeem");
+  if (id === "zh:reset_modal") {
+    return deferred(res, body, () => runCommand("resethwid", key ? { key } : {}, body.member, body.user), "panel-reset");
+  }
+  send(res, 200, { type: 4, data: { flags: 64, content: "ไม่รู้จักฟอร์มนี้" } });
+}
+
+const BOOTED_AT = Date.now();
+let presenceIdx = 0;
+async function presenceData() {
+  let s = null;
+  try {
+    s = await getStats();
+  } catch {}
+  const states = [
+    s ? `🔑 คีย์ใช้งานอยู่ ${s.active} คีย์` : null,
+    `🟢 ออนไลน์มาแล้ว ${fmtHours((Date.now() - BOOTED_AT) / 3600000)}`,
+    s ? `👥 สมาชิก ${s.members} คน · ขายแล้ว ${s.sold} คีย์` : null,
+    "🛒 zerohub-shop.pages.dev",
+  ].filter(Boolean);
+  const state = states[presenceIdx++ % states.length];
+  return { since: null, activities: [{ name: "Custom Status", type: 4, state }], status: "online", afk: false };
+}
+
+function startGateway() {
+  if (!DISCORD_BOT_TOKEN) return;
+  if (typeof WebSocket !== "function") return console.error("gateway: this Node version has no WebSocket, bot will show offline");
+  let ws = null;
+  let beat = null;
+  let seq = null;
+  let acked = true;
+  let retry = 0;
+  const sendOp = (op, d) => ws && ws.readyState === 1 && ws.send(JSON.stringify({ op, d }));
+  const connect = () => {
+    ws = new WebSocket("wss://gateway.discord.gg/?v=10&encoding=json");
+    ws.onmessage = async (ev) => {
+      let p;
+      try {
+        p = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+      if (p.s != null) seq = p.s;
+      if (p.op === 10) {
+        clearInterval(beat);
+        acked = true;
+        beat = setInterval(() => {
+          if (!acked) return ws.close(4000);
+          acked = false;
+          sendOp(1, seq);
+        }, p.d.heartbeat_interval);
+        sendOp(2, {
+          token: DISCORD_BOT_TOKEN,
+          intents: 0,
+          properties: { os: "linux", browser: "zerohub", device: "zerohub" },
+          presence: await presenceData(),
+        });
+      } else if (p.op === 11) acked = true;
+      else if (p.op === 1) sendOp(1, seq);
+      else if (p.op === 7 || p.op === 9) ws.close(4000);
+      else if (p.op === 0 && p.t === "READY") {
+        retry = 0;
+        console.log("gateway: bot online");
+      }
+    };
+    ws.onclose = (ev) => {
+      clearInterval(beat);
+      if ([4004, 4010, 4011, 4012, 4013, 4014].includes(ev.code)) return console.error("gateway: stopped, code", ev.code);
+      setTimeout(connect, Math.min(60000, 5000 * ++retry));
+    };
+    ws.onerror = () => {};
+  };
+  connect();
+  setInterval(async () => sendOp(3, await presenceData()), 60 * 1000).unref();
+}
+
+let bannerCache = null;
+function handleBanner(req, res) {
+  if (!bannerCache) {
+    try {
+      bannerCache = require("fs").readFileSync(require("path").join(__dirname, "panel-banner.png"));
+    } catch {
+      return send(res, 404, { ok: false });
+    }
+  }
+  res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" });
+  res.end(bannerCache);
 }
 
 async function route(req, res) {
@@ -1010,6 +1273,7 @@ async function route(req, res) {
     return res.end();
   }
   if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api" }, cors);
+  if (m === "GET" && path === "/assets/panel-banner.png") return handleBanner(req, res);
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
   if (m === "GET" && path === "/api/key/check") return handleKeyCheck(req, res, url);
@@ -1039,4 +1303,7 @@ http
       send(res, bad ? 400 : 500, { ok: false, error: bad ? "ข้อมูลไม่ถูกต้อง" : "เซิร์ฟเวอร์ขัดข้อง ลองใหม่อีกครั้ง" }, cors);
     });
   })
-  .listen(PORT, () => console.log(`ZeroHub API on :${PORT}`));
+  .listen(PORT, () => {
+    console.log(`ZeroHub API on :${PORT}`);
+    startGateway();
+  });
