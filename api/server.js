@@ -527,6 +527,12 @@ function userName(u) {
   return clean(m.username || m.full_name || m.name || (u.email || "").split("@")[0], 40);
 }
 
+function discordIdOf(u) {
+  const ident = (u.identities || []).find((i) => i.provider === "discord");
+  const id = String((ident && (ident.id || (ident.identity_data && ident.identity_data.sub))) || "");
+  return /^\d{15,25}$/.test(id) ? id : null;
+}
+
 async function walletAdd(uid, amount, kind, note, ref) {
   const rows = await db("rpc/wallet_add", { method: "POST", body: { p_user: uid, p_amount: amount, p_kind: kind, p_note: note, p_ref: ref } });
   return rows[0] || { status: "error" };
@@ -659,7 +665,12 @@ async function handleBuy(req, res, cors) {
   if (r.status === "funds") {
     return send(res, 400, { ok: false, status: "funds", error: "พอยต์ไม่พอ เติมเงินก่อนแล้วลองใหม่", balance: Number(r.balance) }, cors);
   }
-  const [k] = await db(`keys?select=*&id=eq.${r.key_id}`);
+  let [k] = await db(`keys?select=*&id=eq.${r.key_id}`);
+  const discordId = discordIdOf(u);
+  if (discordId) {
+    k = (await updateKey(k.key, { discord_id: discordId }).catch(() => null)) || k;
+    grantBuyerRole(discordId).catch(() => {});
+  }
   const tier = await getTier(tierId);
   postWebhook(SALES_WEBHOOK_URL, {
     username: "ZeroHub Shop",
