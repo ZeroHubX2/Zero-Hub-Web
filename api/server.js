@@ -459,23 +459,37 @@ function parseVoucher(input) {
   return /^[0-9A-Za-z]{10,64}$/.test(code) ? code : "";
 }
 
+let browserClient = null;
+function browserFetch() {
+  if (browserClient === null) {
+    try {
+      const { Impit } = require("impit");
+      const client = new Impit({ browser: "chrome", timeout: 20000 });
+      browserClient = (url, opts) => client.fetch(url, opts);
+    } catch (err) {
+      console.error("impit unavailable, using plain fetch:", err.message);
+      browserClient = (url, opts) => fetch(url, { ...opts, signal: AbortSignal.timeout(20000) });
+    }
+  }
+  return browserClient;
+}
+
 async function truemoney(code, action) {
   const base = `${TRUEMONEY_BASE}/campaign/vouchers/${q(code)}`;
   const headers = {
-    Accept: "application/json",
-    "Content-Type": "application/json",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+    Accept: "application/json, text/plain, */*",
+    "Accept-Language": "th-TH,th;q=0.9,en;q=0.8",
     Origin: "https://gift.truemoney.com",
     Referer: `https://gift.truemoney.com/campaign/?v=${code}`,
   };
+  const go = browserFetch();
   const r =
     action === "verify"
-      ? await fetch(`${base}/verify?mobile=${TRUEMONEY_PHONE}`, { headers, signal: AbortSignal.timeout(15000) })
-      : await fetch(`${base}/redeem`, {
+      ? await go(`${base}/verify?mobile=${TRUEMONEY_PHONE}`, { headers })
+      : await go(`${base}/redeem`, {
           method: "POST",
-          headers,
+          headers: { ...headers, "Content-Type": "application/json" },
           body: JSON.stringify({ mobile: TRUEMONEY_PHONE, voucher_hash: code }),
-          signal: AbortSignal.timeout(20000),
         });
   const text = await r.text();
   let data;
