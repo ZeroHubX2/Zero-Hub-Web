@@ -35,6 +35,7 @@ const TRUEMONEY_PHONE = env("TRUEMONEY_PHONE").replace(/\D/g, "");
 const ADMIN_TOKEN = env("ADMIN_TOKEN");
 const SHOP_URL = env("SHOP_URL", "https://zerohub-shop.pages.dev");
 const TRUEMONEY_BASE = env("TRUEMONEY_BASE", "https://gift.truemoney.com").replace(/\/+$/, "");
+const TRUEMONEY_PROXY_SECRET = env("TRUEMONEY_PROXY_SECRET");
 const SESSION_SECRET = env("SESSION_SECRET") || crypto.createHash("sha256").update(`zh-session:${SUPABASE_KEY}`).digest("hex");
 const DISCORD_PUBLIC_KEY = env("DISCORD_PUBLIC_KEY");
 const DISCORD_APP_ID = env("DISCORD_APP_ID");
@@ -482,6 +483,7 @@ async function truemoney(code, action) {
     Origin: "https://gift.truemoney.com",
     Referer: `https://gift.truemoney.com/campaign/?v=${code}`,
   };
+  if (TRUEMONEY_PROXY_SECRET) headers["x-zh-secret"] = TRUEMONEY_PROXY_SECRET;
   const go = browserFetch();
   const r =
     action === "verify"
