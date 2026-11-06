@@ -768,9 +768,9 @@ async function handlePromoRedeem(req, res, cors) {
   const tier = await getTier(k.tier);
   postWebhook(SALES_WEBHOOK_URL, {
     username: "ZeroHub Shop",
-    embeds: [{ title: "🎁 ใช้โค้ดรับคีย์ฟรี", color: 0xff2a4b, fields: [{ name: "ผู้ใช้", value: who }, { name: "โค้ด", value: code, inline: true }, { name: "แพ็กเกจ", value: tier ? tier.name : k.tier, inline: true }, { name: "คีย์", value: `||${k.key}||`, inline: true }], timestamp: new Date().toISOString() }],
+    embeds: [{ title: r.kind === "random" ? "🎲 สุ่มคีย์จากโค้ด" : "🎁 ใช้โค้ดรับคีย์ฟรี", color: 0xff2a4b, fields: [{ name: "ผู้ใช้", value: who }, { name: "โค้ด", value: code, inline: true }, { name: "แพ็กเกจ", value: tier ? tier.name : k.tier, inline: true }, { name: "คีย์", value: `||${k.key}||`, inline: true }], timestamp: new Date().toISOString() }],
   });
-  return send(res, 200, { ok: true, kind: "key", key: keyView(k, tier && tier.name) }, cors);
+  return send(res, 200, { ok: true, kind: "key", random: r.kind === "random", key: keyView(k, tier && tier.name) }, cors);
 }
 
 async function handleBuy(req, res, cors) {
@@ -886,7 +886,12 @@ async function handleAdmin(req, res, cors, path, url) {
     return send(res, 200, { ok: true, keys, tiers }, cors);
   }
   if (req.method === "GET" && path === "/api/admin/promos") {
-    return send(res, 200, { ok: true, promos: await db("promo_codes?select=*&order=created_at.desc&limit=200") }, cors);
+    const [promos, prizes] = await Promise.all([
+      db("promo_codes?select=*&order=created_at.desc&limit=200"),
+      db("promo_prizes?select=*&limit=2000"),
+    ]);
+    for (const pr of promos) pr.prizes = prizes.filter((z) => z.code === pr.code);
+    return send(res, 200, { ok: true, promos }, cors);
   }
   if (req.method === "GET" && path === "/api/admin/tiers") {
     return send(res, 200, { ok: true, tiers: await getTiers(true) }, cors);
@@ -928,9 +933,20 @@ async function handleAdmin(req, res, cors, path, url) {
     let code = normCode(body.code);
     if (!code) code = "ZH" + crypto.randomBytes(4).toString("hex").toUpperCase();
     if (!validCode(code)) return send(res, 400, { ok: false, error: "โค้ดใช้ได้เฉพาะ A-Z 0-9 - _ ยาว 3-32 ตัว" }, cors);
-    const kind = body.kind === "key" ? "key" : "points";
+    const kind = ["key", "random"].includes(body.kind) ? body.kind : "points";
     const row = { code, kind, max_uses: Math.min(100000, Math.max(1, Math.floor(Number(body.max_uses) || 1))), note: clean(body.note, 200) };
-    if (kind === "points") {
+    let prizes = [];
+    if (kind === "random") {
+      const all = await getTiers(true);
+      for (const z of Array.isArray(body.prizes) ? body.prizes : []) {
+        const tier = all.find((t) => t.id === z.tier);
+        const qty = Math.floor(Number(z.qty));
+        const weight = Math.round(Number(z.weight) * 1000) / 1000;
+        if (tier && qty > 0 && weight > 0) prizes.push({ code, tier: tier.id, qty: Math.min(qty, 100000), weight: Math.min(weight, 100000) });
+      }
+      if (!prizes.length) return send(res, 400, { ok: false, error: "ใส่รางวัลอย่างน้อย 1 แพ็ก (จำนวนคน และ % มากกว่า 0)" }, cors);
+      row.max_uses = prizes.reduce((a, z) => a + z.qty, 0);
+    } else if (kind === "points") {
       const pts = Math.round(Number(body.points) * 100) / 100;
       if (!(pts > 0 && pts <= 100000)) return send(res, 400, { ok: false, error: "จำนวนพอยต์ไม่ถูกต้อง" }, cors);
       row.points = pts;
@@ -939,10 +955,22 @@ async function handleAdmin(req, res, cors, path, url) {
       if (!tier) return send(res, 400, { ok: false, error: "ไม่พบแพ็กเกจ" }, cors);
       row.tier = tier.id;
     }
+    const until = body.expires_at ? new Date(body.expires_at) : null;
     const days = Number(body.expires_days);
-    if (days > 0) row.expires_at = new Date(Date.now() + Math.min(days, 3650) * 86400000).toISOString();
+    if (until && !isNaN(until)) {
+      if (until.getTime() <= Date.now()) return send(res, 400, { ok: false, error: "เวลาหมดอายุต้องอยู่ในอนาคต" }, cors);
+      row.expires_at = until.toISOString();
+    } else if (days > 0) row.expires_at = new Date(Date.now() + Math.min(days, 3650) * 86400000).toISOString();
     try {
       const [made] = await db("promo_codes", { method: "POST", body: row, prefer: "return=representation" });
+      if (prizes.length) {
+        try {
+          made.prizes = await db("promo_prizes", { method: "POST", body: prizes, prefer: "return=representation" });
+        } catch (err) {
+          await db(`promo_codes?code=eq.${q(code)}`, { method: "DELETE" }).catch(() => {});
+          throw err;
+        }
+      }
       return send(res, 200, { ok: true, promo: made }, cors);
     } catch (err) {
       if (err.code === "23505" || err.status === 409) return send(res, 409, { ok: false, error: "โค้ดนี้มีอยู่แล้ว" }, cors);
@@ -1565,7 +1593,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "promo-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "promo-random-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
