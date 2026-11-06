@@ -303,15 +303,31 @@ function keyView(k, tierName) {
   };
 }
 
-function formatLeft(k) {
-  if (k.hours === null) return "ถาวร";
-  if (!k.activated_at) return `${fmtHours(k.hours)} (เริ่มนับเมื่อใช้ครั้งแรก)`;
+const T = (L, th, en) => (L === "en" ? en : th);
+
+const KEY_STATUS_EN = {
+  invalid: "Invalid key",
+  revoked: "This key has been revoked",
+  hwid: "This key is locked to another device. Reset HWID on My Keys on the website or with /resethwid on Discord",
+  expired: "This key has expired",
+  cooldown: "HWID can be reset once a day",
+};
+const statusText = (L, s) => (L === "en" ? KEY_STATUS_EN : KEY_STATUS_TEXT)[s] || s;
+
+function formatLeft(k, L) {
+  if (k.hours === null) return T(L, "ถาวร", "Lifetime");
+  if (!k.activated_at) return T(L, `${fmtHours(k.hours)} (เริ่มนับเมื่อใช้ครั้งแรก)`, `${fmtHours(k.hours, L)} (starts on first use)`);
   const left = new Date(k.expires_at).getTime() - Date.now();
-  if (left <= 0) return "หมดอายุแล้ว";
-  return `เหลือ ${fmtHours(left / 3600000)}`;
+  if (left <= 0) return T(L, "หมดอายุแล้ว", "Expired");
+  return T(L, `เหลือ ${fmtHours(left / 3600000)}`, `${fmtHours(left / 3600000, L)} left`);
 }
 
-function fmtHours(h) {
+function fmtHours(h, L) {
+  if (L === "en") {
+    if (h >= 48) return `${Math.floor(h / 24)} days ${Math.floor(h % 24)} h`;
+    if (h >= 1) return `${Math.floor(h)} h`;
+    return `${Math.max(1, Math.floor(h * 60))} min`;
+  }
   if (h >= 48) return `${Math.floor(h / 24)} วัน ${Math.floor(h % 24)} ชม.`;
   if (h >= 1) return `${Math.floor(h)} ชม.`;
   return `${Math.max(1, Math.floor(h * 60))} นาที`;
@@ -947,17 +963,19 @@ function optionsOf(data) {
   return out;
 }
 
-function keyLine(k) {
-  const state = k.revoked ? "⛔ ระงับ" : k.expires_at && new Date(k.expires_at) <= new Date() ? "⌛ หมดอายุ" : "✅";
+function keyLine(k, L) {
+  const state = k.revoked ? T(L, "⛔ ระงับ", "⛔ Revoked") : k.expires_at && new Date(k.expires_at) <= new Date() ? T(L, "⌛ หมดอายุ", "⌛ Expired") : "✅";
   const who = k.discord_id ? ` <@${k.discord_id}>` : "";
-  return `${state} \`${k.key}\` · ${k.tier} · ${formatLeft(k)} · HWID ${k.hwid ? "ผูกแล้ว" : "ว่าง"}${who}`;
+  return `${state} \`${k.key}\` · ${k.tier} · ${formatLeft(k, L)} · HWID ${k.hwid ? T(L, "ผูกแล้ว", "locked") : T(L, "ว่าง", "free")}${who}`;
 }
 
-async function runCommand(name, opts, member, user) {
+const langOf = (body) => (String((body && body.locale) || "").toLowerCase().startsWith("th") ? "th" : "en");
+
+async function runCommand(name, opts, member, user, L = "th") {
   const uid = (member && member.user && member.user.id) || (user && user.id);
   const admin = discordIsAdmin(member);
   const adminOnly = ["genkey", "keys", "revokekey", "extendkey"];
-  if (adminOnly.includes(name) && !admin) return { content: "คำสั่งนี้สำหรับแอดมินเท่านั้น" };
+  if (adminOnly.includes(name) && !admin) return { content: T(L, "คำสั่งนี้สำหรับแอดมินเท่านั้น", "This command is for admins only") };
 
   if (name === "genkey") {
     const tier = await getTier(opts.tier);
@@ -995,36 +1013,43 @@ async function runCommand(name, opts, member, user) {
   }
   if (name === "redeem") {
     const k = await getKey(normKey(opts.key));
-    if (!k || k.revoked) return { content: k ? KEY_STATUS_TEXT.revoked : KEY_STATUS_TEXT.invalid };
-    if (k.discord_id && k.discord_id !== uid) return { content: "คีย์นี้ผูกกับบัญชี Discord อื่นแล้ว" };
+    if (!k || k.revoked) return { content: statusText(L, k ? "revoked" : "invalid") };
+    if (k.discord_id && k.discord_id !== uid) return { content: T(L, "คีย์นี้ผูกกับบัญชี Discord อื่นแล้ว", "This key is already linked to another Discord account") };
     if (!k.discord_id) await updateKey(k.key, { discord_id: uid });
     const ok = await grantBuyerRole(uid);
-    return { content: `ผูกคีย์กับบัญชีของคุณแล้ว (${formatLeft(k)})${ok ? "\nได้รับยศ Buyer แล้ว" : "\nให้ยศไม่สำเร็จ แจ้งแอดมิน"}` };
+    return {
+      content: T(
+        L,
+        `ผูกคีย์กับบัญชีของคุณแล้ว (${formatLeft(k)})${ok ? "\nได้รับยศ Buyer แล้ว" : "\nให้ยศไม่สำเร็จ แจ้งแอดมิน"}`,
+        `Key linked to your account (${formatLeft(k, L)})${ok ? "\nYou got the Buyer role" : "\nCouldn't give the role, please tell an admin"}`
+      ),
+    };
   }
   if (name === "mykey") {
     const keys = await db(`keys?select=*&discord_id=eq.${q(uid)}&order=created_at.desc&limit=10`);
-    if (!keys.length) return { content: `คุณยังไม่มีคีย์ที่ผูกกับบัญชี ซื้อได้ที่ ${SHOP_URL} แล้วใช้ /redeem` };
-    return { content: keys.map(keyLine).join("\n") };
+    if (!keys.length) return { content: T(L, `คุณยังไม่มีคีย์ที่ผูกกับบัญชี ซื้อได้ที่ ${SHOP_URL} แล้วใช้ /redeem`, `You have no key linked yet. Buy one at ${SHOP_URL} then use /redeem`) };
+    return { content: keys.map((k) => keyLine(k, L)).join("\n") };
   }
   if (name === "resethwid") {
     let k;
     if (opts.key) {
       k = await getKey(normKey(opts.key));
-      if (k && k.discord_id && k.discord_id !== uid && !admin) return { content: "คีย์นี้ผูกกับบัญชี Discord อื่น" };
+      if (k && k.discord_id && k.discord_id !== uid && !admin) return { content: T(L, "คีย์นี้ผูกกับบัญชี Discord อื่น", "This key belongs to another Discord account") };
     } else {
       const keys = await db(`keys?select=*&discord_id=eq.${q(uid)}&revoked=eq.false&hwid=not.is.null&order=created_at.desc`);
-      if (keys.length > 1) return { content: "คุณมีหลายคีย์ ระบุคีย์ด้วย /resethwid key:" };
+      if (keys.length > 1) return { content: T(L, "คุณมีหลายคีย์ ระบุคีย์ด้วย /resethwid key:", "You have several keys. Enter the key you want to reset") };
       k = keys[0];
     }
-    if (!k) return { content: "ไม่พบคีย์ที่ต้องรีเซ็ต" };
+    if (!k) return { content: T(L, "ไม่พบคีย์ที่ต้องรีเซ็ต", "No key to reset") };
     const r = await resetHwid(k.key, admin && !!opts.key && k.discord_id !== uid);
     if (r.status === "cooldown") {
-      return { content: `รีเซ็ต HWID ได้วันละครั้ง ครั้งถัดไป <t:${Math.floor(new Date(r.next_reset_at).getTime() / 1000)}:R>` };
+      const ts = Math.floor(new Date(r.next_reset_at).getTime() / 1000);
+      return { content: T(L, `รีเซ็ต HWID ได้วันละครั้ง ครั้งถัดไป <t:${ts}:R>`, `HWID can be reset once a day. Next reset <t:${ts}:R>`) };
     }
-    if (r.status !== "ok") return { content: KEY_STATUS_TEXT[r.status] || r.status };
-    return { content: `รีเซ็ต HWID คีย์ \`${k.key}\` แล้ว รันสคริปต์บนเครื่องใหม่ได้เลย` };
+    if (r.status !== "ok") return { content: statusText(L, r.status) };
+    return { content: T(L, `รีเซ็ต HWID คีย์ \`${k.key}\` แล้ว รันสคริปต์บนเครื่องใหม่ได้เลย`, `HWID reset for \`${k.key}\`. Run the script on your new device.`) };
   }
-  return { content: "ไม่รู้จักคำสั่งนี้" };
+  return { content: T(L, "ไม่รู้จักคำสั่งนี้", "Unknown command") };
 }
 
 async function finishInteraction(token, payload) {
@@ -1057,7 +1082,7 @@ async function handleInteraction(req, res) {
   if (body.type !== 2) return send(res, 400, { error: "unsupported" });
   const name = body.data && body.data.name;
   if (name === "panel") return handlePanelCommand(res, body);
-  await deferred(res, body, () => runCommand(name, optionsOf(body.data), body.member, body.user), name);
+  await deferred(res, body, () => runCommand(name, optionsOf(body.data), body.member, body.user, langOf(body)), name);
 }
 
 async function deferred(res, body, work, label) {
@@ -1066,7 +1091,7 @@ async function deferred(res, body, work, label) {
     await finishInteraction(body.token, await work());
   } catch (err) {
     console.error("interaction failed:", label, err.message);
-    await finishInteraction(body.token, { content: "เกิดข้อผิดพลาด ลองใหม่อีกครั้ง" }).catch(() => {});
+    await finishInteraction(body.token, { content: T(langOf(body), "เกิดข้อผิดพลาด ลองใหม่อีกครั้ง", "Something went wrong, please try again") }).catch(() => {});
   }
 }
 
@@ -1090,15 +1115,17 @@ function btn(label, emoji, style, id) {
 }
 
 const TIER_ICONS = { "24h": "⚡", "3d": "🔥", "7d": "👑", lifetime: "♾️" };
+const TIER_EN = { "24h": "1 Day", "3d": "3 Days", "7d": "7 Days", lifetime: "Lifetime" };
+const tierName = (t, L) => (L === "en" ? TIER_EN[t.id] || t.name : t.name);
 const text = (content) => ({ type: 10, content });
 const line = (big) => ({ type: 14, divider: true, spacing: big ? 2 : 1 });
 const row = (...components) => ({ type: 1, components });
 
-async function priceLines() {
+async function priceLines(L) {
   try {
-    return (await getTiers()).map((t) => `${TIER_ICONS[t.id] || "🔑"} **${t.name}** — \`${t.price} บาท\``).join("\n");
+    return (await getTiers()).map((t) => `${TIER_ICONS[t.id] || "🔑"} **${tierName(t, L)}** — \`${t.price} ${T(L, "บาท", "THB")}\``).join("\n");
   } catch {
-    return `ดูราคาได้ที่ ${SHOP_URL}`;
+    return T(L, `ดูราคาได้ที่ ${SHOP_URL}`, `See prices at ${SHOP_URL}`);
   }
 }
 
@@ -1110,6 +1137,7 @@ async function panelMessage() {
   const priceText = tiers.length
     ? tiers.map((t) => `${TIER_ICONS[t.id] || "🔑"} ${t.name} **\`${t.price}฿\`**`).join("  ·  ")
     : `ดูราคาได้ที่ ${SHOP_URL}`;
+  const priceTextEn = tiers.length ? tiers.map((t) => `${TIER_EN[t.id] || t.name} ${t.price}฿`).join(" · ") : "";
   return {
     flags: 1 << 15,
     components: [
@@ -1121,19 +1149,19 @@ async function panelMessage() {
             type: 9,
             components: [
               text("# ZERO HUB"),
-              text("**Script & Tools** — คีย์เดียว เล่นได้ทุกเกม\n-# One key · Every game · ได้คีย์ทันที 24 ชม."),
+              text("**Script & Tools** — คีย์เดียว เล่นได้ทุกเกม · One key, every game\n-# ได้คีย์ทันที 24 ชม. · Instant delivery 24/7"),
             ],
             accessory: { type: 11, media: { url: `${PUBLIC_URL}/assets/panel-logo.png?v=2` } },
           },
           line(true),
-          text(`**💳 แพ็กเกจคีย์**\n${priceText}\n-# ⏱️ เวลาเริ่มนับตอนใส่คีย์ครั้งแรก · ซื้อเก็บไว้ก่อนได้`),
-          row(btn("ซื้อคีย์", "🛒", 3, "zh:prices"), btn("แลกคีย์", "🎟️", 1, "zh:redeem"), btn("รับสคริปต์", "⚙️", 2, "zh:script")),
+          text(`**💳 แพ็กเกจคีย์ · Key Plans**\n${priceText}${priceTextEn ? `\n-# 🇬🇧 ${priceTextEn}` : ""}\n-# ⏱️ เวลาเริ่มนับตอนใส่คีย์ครั้งแรก · Time starts on first use`),
+          row(btn("ซื้อคีย์ · Buy", "🛒", 3, "zh:prices"), btn("แลกคีย์ · Redeem", "🎟️", 1, "zh:redeem"), btn("รับสคริปต์ · Script", "⚙️", 2, "zh:script")),
           line(),
-          text("**🧰 จัดการคีย์ของคุณ**"),
-          row(btn("คีย์ของฉัน", "📋", 2, "zh:info"), btn("ย้ายเครื่อง (HWID)", "🔄", 2, "zh:reset"), btn("เกมที่รองรับ", "🎮", 2, "zh:games")),
+          text("**🧰 จัดการคีย์ของคุณ · Manage your key**"),
+          row(btn("คีย์ของฉัน · My Keys", "📋", 2, "zh:info"), btn("ย้ายเครื่อง · HWID", "🔄", 2, "zh:reset"), btn("เกม · Games", "🎮", 2, "zh:games")),
           { type: 12, items: [{ media: { url: `${PUBLIC_URL}/assets/panel-banner.png?v=2` } }] },
-          text("-# 🔐 ทุกปุ่มตอบกลับให้เห็นเฉพาะคุณ · Zero Hub Shop"),
-          row(btn("เว็บร้าน", "🌐", 5, SHOP_URL), btn("Discord", "💬", 5, DISCORD_INVITE)),
+          text("-# 🔐 ทุกปุ่มตอบกลับให้เห็นเฉพาะคุณ · Replies are only visible to you\n-# 🌐 ตอบเป็นภาษาไทยหรืออังกฤษตามภาษาที่ตั้งใน Discord · Replies follow your Discord language"),
+          row(btn("เว็บร้าน · Shop", "🌐", 5, SHOP_URL), btn("Discord", "💬", 5, DISCORD_INVITE)),
         ],
       },
     ],
@@ -1146,7 +1174,7 @@ function ephemeralEmbed(embed) {
   return { type: 4, data: { flags: 64 | (1 << 15), components: [{ type: 17, accent_color: PANEL_COLOR, components: parts }] } };
 }
 
-function keyModal(id, title, required) {
+function keyModal(id, title, required, L) {
   return {
     type: 9,
     data: {
@@ -1159,7 +1187,7 @@ function keyModal(id, title, required) {
             {
               type: 4,
               custom_id: "key",
-              label: required ? "คีย์ของคุณ / Your key" : "คีย์ (เว้นว่างได้ถ้ามีคีย์เดียว)",
+              label: required ? T(L, "คีย์ของคุณ", "Your key") : T(L, "คีย์ (เว้นว่างได้ถ้ามีคีย์เดียว)", "Key (leave empty if you have only one)"),
               style: 1,
               min_length: required ? 8 : 0,
               max_length: 40,
@@ -1194,8 +1222,9 @@ async function handlePanelCommand(res, body) {
 
 async function handlePanelButton(res, body) {
   const id = body.data && body.data.custom_id;
-  if (id === "zh:redeem") return send(res, 200, keyModal("zh:redeem_modal", "Redeem Key · แลกคีย์", true));
-  if (id === "zh:reset") return send(res, 200, keyModal("zh:reset_modal", "Reset HWID · ย้ายเครื่อง", false));
+  const L = langOf(body);
+  if (id === "zh:redeem") return send(res, 200, keyModal("zh:redeem_modal", T(L, "แลกคีย์", "Redeem Key"), true, L));
+  if (id === "zh:reset") return send(res, 200, keyModal("zh:reset_modal", T(L, "ย้ายเครื่อง (รีเซ็ต HWID)", "Reset HWID"), false, L));
   if (id === "zh:script") {
     return send(
       res,
@@ -1203,12 +1232,16 @@ async function handlePanelButton(res, body) {
       ephemeralEmbed({
         title: "📜 Zero Hub Loader",
         description: [
-          "ใช้สคริปต์นี้ตัวเดียวทุกเกม / One loader for every game",
+          T(L, "ใช้สคริปต์นี้ตัวเดียวทุกเกม", "One loader for every game"),
           "```lua",
           LOADSTRING,
           "```",
-          "**วิธีใช้:** เข้าเกมที่รองรับ → รันใน executor → ใส่คีย์ในหน้าต่างโหลดเดอร์ (ใส่ครั้งเดียว ครั้งต่อไปจำให้เอง)",
-          `ยังไม่มีคีย์? ซื้อได้ที่ [zerohub-shop.pages.dev](${SHOP_URL})`,
+          T(
+            L,
+            "**วิธีใช้:** เข้าเกมที่รองรับ → รันใน executor → ใส่คีย์ในหน้าต่างโหลดเดอร์ (ใส่ครั้งเดียว ครั้งต่อไปจำให้เอง)",
+            "**How to use:** join a supported game → run it in your executor → enter your key in the loader window (only once, it is remembered)"
+          ),
+          T(L, `ยังไม่มีคีย์? ซื้อได้ที่ [zerohub-shop.pages.dev](${SHOP_URL})`, `No key yet? Buy one at [zerohub-shop.pages.dev](${SHOP_URL})`),
         ].join("\n"),
       })
     );
@@ -1218,14 +1251,22 @@ async function handlePanelButton(res, body) {
       res,
       200,
       ephemeralEmbed({
-        title: "🛒 ซื้อคีย์ · Buy Key",
+        title: T(L, "🛒 ซื้อคีย์", "🛒 Buy a Key"),
         description: [
-          await priceLines(),
+          await priceLines(L),
           "",
-          "**วิธีซื้อ:** สมัครที่เว็บ (ล็อกอินด้วย Discord ได้) → เติมพอยต์ด้วยซองอั่งเปา TrueMoney → เลือกแพ็กเกจ → ได้คีย์ทันที",
-          "-# 🎮 คีย์เดียวใช้ได้ทุกเกม · ⏱️ เวลาเริ่มนับตอนใช้ครั้งแรก · ซื้อผ่านเว็บด้วยบัญชี Discord ได้ยศ Buyer อัตโนมัติ",
+          T(
+            L,
+            "**วิธีซื้อ:** สมัครที่เว็บ (ล็อกอินด้วย Discord ได้) → เติมพอยต์ด้วยซองอั่งเปา TrueMoney → เลือกแพ็กเกจ → ได้คีย์ทันที",
+            "**How to buy:** sign up on the website (Discord login works) → top up points with a TrueMoney gift voucher → pick a plan → get your key instantly"
+          ),
+          T(
+            L,
+            "-# 🎮 คีย์เดียวใช้ได้ทุกเกม · ⏱️ เวลาเริ่มนับตอนใช้ครั้งแรก · ซื้อผ่านเว็บด้วยบัญชี Discord ได้ยศ Buyer อัตโนมัติ",
+            "-# 🎮 One key, every game · ⏱️ Time starts on first use · Buying with your Discord account gives you the Buyer role automatically"
+          ),
         ].join("\n"),
-        buttons: [btn("ไปที่ร้านค้า · Open Shop", "🛒", 5, `${SHOP_URL}/shop`), btn("เติมเงิน · Top up", "💰", 5, `${SHOP_URL}/topup`)],
+        buttons: [btn(T(L, "ไปที่ร้านค้า", "Open Shop"), "🛒", 5, `${SHOP_URL}/shop`), btn(T(L, "เติมเงิน", "Top up"), "💰", 5, `${SHOP_URL}/topup`)],
       })
     );
   }
@@ -1234,13 +1275,15 @@ async function handlePanelButton(res, body) {
       res,
       200,
       ephemeralEmbed({
-        title: "🗺️ เกมที่รองรับ / Supported Games",
-        description: PANEL_GAMES.map(([e, n]) => `${e} **${n}**`).join("\n") + "\n\nคีย์เดียวใช้ได้ทุกเกม รวมถึงเกมที่จะเพิ่มในอนาคต",
+        title: T(L, "🗺️ เกมที่รองรับ", "🗺️ Supported Games"),
+        description:
+          PANEL_GAMES.map(([e, n]) => `${e} **${n}**`).join("\n") +
+          T(L, "\n\nคีย์เดียวใช้ได้ทุกเกม รวมถึงเกมที่จะเพิ่มในอนาคต", "\n\nOne key works for every game, including games added later"),
       })
     );
   }
-  if (id === "zh:info") return deferred(res, body, () => runCommand("mykey", {}, body.member, body.user), "panel-info");
-  send(res, 200, { type: 4, data: { flags: 64, content: "ปุ่มนี้หมดอายุแล้ว ลองใหม่อีกครั้ง" } });
+  if (id === "zh:info") return deferred(res, body, () => runCommand("mykey", {}, body.member, body.user, L), "panel-info");
+  send(res, 200, { type: 4, data: { flags: 64, content: T(L, "ปุ่มนี้หมดอายุแล้ว ลองใหม่อีกครั้ง", "This button has expired, try again") } });
 }
 
 function modalValue(body) {
@@ -1253,11 +1296,12 @@ function modalValue(body) {
 async function handlePanelModal(res, body) {
   const id = body.data && body.data.custom_id;
   const key = modalValue(body);
-  if (id === "zh:redeem_modal") return deferred(res, body, () => runCommand("redeem", { key }, body.member, body.user), "panel-redeem");
+  const L = langOf(body);
+  if (id === "zh:redeem_modal") return deferred(res, body, () => runCommand("redeem", { key }, body.member, body.user, L), "panel-redeem");
   if (id === "zh:reset_modal") {
-    return deferred(res, body, () => runCommand("resethwid", key ? { key } : {}, body.member, body.user), "panel-reset");
+    return deferred(res, body, () => runCommand("resethwid", key ? { key } : {}, body.member, body.user, L), "panel-reset");
   }
-  send(res, 200, { type: 4, data: { flags: 64, content: "ไม่รู้จักฟอร์มนี้" } });
+  send(res, 200, { type: 4, data: { flags: 64, content: T(L, "ไม่รู้จักฟอร์มนี้", "Unknown form") } });
 }
 
 const BOOTED_AT = Date.now();
@@ -1354,7 +1398,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "deny-browser-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "panel-en-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
