@@ -1293,6 +1293,16 @@ async function handlePanelButton(res, body) {
   if (id === "zh:redeem") return send(res, 200, keyModal("zh:redeem_modal", T(L, "แลกคีย์", "Redeem Key"), true, L));
   if (id === "zh:reset") return send(res, 200, keyModal("zh:reset_modal", T(L, "ย้ายเครื่อง (รีเซ็ต HWID)", "Reset HWID"), false, L));
   if (id === "zh:script") {
+    setTimeout(() => {
+      fetch(`${DISCORD_API}/webhooks/${DISCORD_APP_ID}/${body.token}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ flags: 64, content: LOADSTRING, allowed_mentions: { parse: [] } }),
+        signal: AbortSignal.timeout(10000),
+      })
+        .then(async (r) => r.ok || console.error("script followup failed:", r.status, await r.text()))
+        .catch((err) => console.error("script followup failed:", err.message));
+    }, 700);
     return send(
       res,
       200,
@@ -1309,6 +1319,11 @@ async function handlePanelButton(res, body) {
             "**How to use:** join a supported game → run it in your executor → enter your key in the loader window (only once, it is remembered)"
           ),
           T(L, `ยังไม่มีคีย์? ซื้อได้ที่ [zerohub-shop.pages.dev](${SHOP_URL})`, `No key yet? Buy one at [zerohub-shop.pages.dev](${SHOP_URL})`),
+          T(
+            L,
+            "-# 📱 มือถือ: กดค้างที่ข้อความสคริปต์ด้านล่าง → คัดลอกข้อความ ได้สคริปต์ล้วนๆ ไม่ต้องลบอะไร",
+            "-# 📱 Mobile: long-press the script message below → Copy Text. You get only the script, nothing to delete."
+          ),
         ].join("\n"),
       })
     );
@@ -1465,7 +1480,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "buyer-sync-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "mobile-copy-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
