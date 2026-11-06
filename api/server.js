@@ -934,14 +934,48 @@ async function discordApi(path, method, body) {
   return r.status === 204 ? null : r.json();
 }
 
+const buyerRemoved = new Set();
+
 async function grantBuyerRole(userId) {
   if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID || !DISCORD_BUYER_ROLE_ID) return false;
   try {
     await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${userId}/roles/${DISCORD_BUYER_ROLE_ID}`, "PUT");
+    buyerRemoved.delete(String(userId));
     return true;
   } catch (err) {
     console.error("grant role failed:", err.message);
     return false;
+  }
+}
+
+async function sweepBuyerRoles() {
+  if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID || !DISCORD_BUYER_ROLE_ID || !SUPABASE_URL) return;
+  let rows;
+  try {
+    rows = await db("keys?select=discord_id,revoked,expires_at&discord_id=not.is.null&limit=10000");
+  } catch (err) {
+    return console.error("buyer sweep: read keys failed:", err.message);
+  }
+  const now = Date.now();
+  const valid = new Set();
+  const seen = new Set();
+  for (const k of rows) {
+    const id = String(k.discord_id);
+    seen.add(id);
+    if (!k.revoked && (!k.expires_at || new Date(k.expires_at).getTime() > now)) valid.add(id);
+  }
+  for (const id of seen) {
+    if (valid.has(id) || buyerRemoved.has(id) || !/^\d{15,25}$/.test(id)) continue;
+    try {
+      await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${id}/roles/${DISCORD_BUYER_ROLE_ID}`, "DELETE");
+      buyerRemoved.add(id);
+      console.log("buyer sweep: removed role from", id);
+      postWebhook(SALES_WEBHOOK_URL, { username: "ZeroHub Shop", content: `🔻 ถอดยศ Buyer จาก <@${id}> แล้ว (ไม่มีคีย์ที่ใช้งานได้เหลือ)` });
+    } catch (err) {
+      if (/discord 404/.test(err.message)) buyerRemoved.add(id);
+      else console.error("buyer sweep: remove failed:", id, err.message);
+    }
+    await new Promise((r) => setTimeout(r, 1200));
   }
 }
 
@@ -1398,7 +1432,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "panel-en-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "buyer-sweep-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
@@ -1432,4 +1466,6 @@ http
   .listen(PORT, () => {
     console.log(`ZeroHub API on :${PORT}`);
     startGateway();
+    setTimeout(() => sweepBuyerRoles().catch(() => {}), 2 * 60 * 1000).unref();
+    setInterval(() => sweepBuyerRoles().catch(() => {}), 60 * 60 * 1000).unref();
   });
