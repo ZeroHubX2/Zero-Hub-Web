@@ -942,10 +942,10 @@ async function handleAdmin(req, res, cors, path, url) {
         const tier = all.find((t) => t.id === z.tier);
         const qty = Math.floor(Number(z.qty));
         const weight = Math.round(Number(z.weight) * 1000) / 1000;
-        if (tier && qty > 0 && weight > 0) prizes.push({ code, tier: tier.id, qty: Math.min(qty, 100000), weight: Math.min(weight, 100000) });
+        if (tier && weight > 0) prizes.push({ code, tier: tier.id, qty: qty > 0 ? Math.min(qty, 100000) : null, weight: Math.min(weight, 100000) });
       }
-      if (!prizes.length) return send(res, 400, { ok: false, error: "ใส่รางวัลอย่างน้อย 1 แพ็ก (จำนวนคน และ % มากกว่า 0)" }, cors);
-      row.max_uses = prizes.reduce((a, z) => a + z.qty, 0);
+      if (!prizes.length) return send(res, 400, { ok: false, error: "ใส่โอกาส % มากกว่า 0 อย่างน้อย 1 แพ็ก" }, cors);
+      row.max_uses = prizes.some((z) => z.qty === null) ? 1000000 : prizes.reduce((a, z) => a + z.qty, 0);
     } else if (kind === "points") {
       const pts = Math.round(Number(body.points) * 100) / 100;
       if (!(pts > 0 && pts <= 100000)) return send(res, 400, { ok: false, error: "จำนวนพอยต์ไม่ถูกต้อง" }, cors);
@@ -1593,7 +1593,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "promo-random-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "promo-random-2" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
