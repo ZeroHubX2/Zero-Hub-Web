@@ -103,6 +103,49 @@ function sendText(res, status, text, headers = {}) {
   res.end(text);
 }
 
+function isBrowser(req) {
+  const h = req.headers;
+  if (!/Mozilla\//.test(String(h["user-agent"] || ""))) return false;
+  if (h["sec-fetch-dest"] || h["sec-fetch-mode"] || h["sec-ch-ua"]) return true;
+  return /text\/html/i.test(String(h.accept || ""));
+}
+
+const DENIED_PAGE = `<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>Zero Hub | Access Denied</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600;700&display=swap">
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%}
+body{font-family:Kanit,system-ui,sans-serif;color:#fff;display:grid;place-items:center;padding:16px;
+background:radial-gradient(ellipse 60% 45% at 50% 40%,rgba(200,15,45,.28),transparent 70%),#070707}
+.box{width:100%;max-width:440px;text-align:center;padding:36px 28px;border-radius:20px;background:#121212;
+border:1px solid #2a2a2a;box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,42,75,.08)}
+img{width:96px;height:96px;border-radius:50%;box-shadow:0 0 34px rgba(255,42,75,.35)}
+h1{margin:18px 0 2px;font-size:30px;letter-spacing:4px;font-weight:700}h1 b{color:#ff2a4b}
+.sub{color:#8f8f8f;font-size:12px;letter-spacing:4px}
+.tag{display:inline-block;margin:22px 0 12px;padding:5px 14px;border-radius:999px;font-size:12px;letter-spacing:2px;
+color:#ff6b80;border:1px solid rgba(255,42,75,.45);background:rgba(255,42,75,.08)}
+h2{margin:0 0 8px;font-size:22px}p{margin:0;color:#b5b5b5;font-size:14.5px;line-height:1.6}
+a.btn{display:inline-block;margin-top:22px;padding:11px 22px;border-radius:12px;color:#fff;text-decoration:none;
+background:linear-gradient(135deg,#ff2a4b,#a50d27);box-shadow:0 6px 26px rgba(255,42,75,.35)}
+.foot{margin-top:26px;padding-top:16px;border-top:1px solid #2a2a2a;color:#5f5f5f;font-size:11px;letter-spacing:3px}
+</style></head><body><div class="box">
+<img src="https://zerohub-shop.pages.dev/logo.webp" alt="Zero Hub">
+<h1>ZERO <b>HUB</b></h1><div class="sub">SCRIPT PROTECTION SYSTEM</div>
+<div class="tag">403 · ACCESS RESTRICTED</div>
+<h2>ไม่อนุญาตให้ดูโค้ด</h2>
+<p>ลิงก์นี้ใช้รันใน executor เท่านั้น เปิดดูผ่านเบราว์เซอร์ไม่ได้<br>รับสคริปต์และคีย์ได้ที่ร้าน Zero Hub</p>
+<a class="btn" href="https://zerohub-shop.pages.dev/howto">ไปที่ร้าน Zero Hub</a>
+<div class="foot">ZERO HUB © 2026 · ALL RIGHTS RESERVED</div>
+</div></body></html>`;
+
+function denyBrowser(req, res) {
+  if (!isBrowser(req)) return false;
+  res.writeHead(403, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Robots-Tag": "noindex" });
+  res.end(DENIED_PAGE);
+  return true;
+}
+
 function clientIp(req) {
   const fwd = req.headers["x-forwarded-for"];
   return (typeof fwd === "string" ? fwd.split(",")[0] : req.socket.remoteAddress || "").trim();
@@ -374,6 +417,7 @@ async function handleKeyCheck(req, res, url) {
 }
 
 async function handleKeyScript(req, res, url) {
+  if (denyBrowser(req, res)) return;
   if (loaderLimited(clientIp(req))) return sendText(res, 200, "ZHERR:เรียกบ่อยเกินไป รอสักครู่");
   const key = normKey(url.searchParams.get("key"));
   const hwid = normHwid(url.searchParams.get("hwid"));
@@ -412,6 +456,7 @@ async function handleKeySession(req, res, url) {
 }
 
 async function handleLoader(req, res) {
+  if (denyBrowser(req, res)) return;
   try {
     sendText(res, 200, await fetchRepoFile(SCRIPT_FILES.loader));
   } catch (err) {
@@ -1026,7 +1071,7 @@ async function deferred(res, body, work, label) {
 }
 
 const PUBLIC_URL = env("PUBLIC_URL", "https://zerohub-contact.onrender.com").replace(/\/+$/, "");
-const DISCORD_INVITE = env("DISCORD_INVITE", "https://discord.gg/22RuqrckH");
+const DISCORD_INVITE = env("DISCORD_INVITE", "https://discord.gg/CYxyhhBNba");
 const LOADSTRING = `loadstring(game:HttpGet("${PUBLIC_URL}/api/script/ZeroHub"))()`;
 const PANEL_COLOR = 0xff2a4b;
 const PANEL_GAMES = [
@@ -1309,7 +1354,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "tm-proxy-2" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "deny-browser-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
