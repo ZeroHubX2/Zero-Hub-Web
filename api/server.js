@@ -741,6 +741,16 @@ async function handlePromoRedeem(req, res, cors) {
   const body = await readJson(req);
   const code = normCode(body.code);
   if (!validCode(code)) return send(res, 400, { ok: false, error: PROMO_TEXT.invalid }, cors);
+  const promoDiscord = discordIdOf(u);
+  if (!promoDiscord) return send(res, 403, { ok: false, status: "discord", error: "โค้ดใช้ได้เฉพาะบัญชีที่ล็อกอินด้วย Discord" }, cors);
+  if (DISCORD_BOT_TOKEN && DISCORD_GUILD_ID) {
+    try {
+      await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${promoDiscord}`, "GET");
+    } catch (err) {
+      if (/discord 404/.test(err.message)) return send(res, 403, { ok: false, status: "guild", error: "ต้องเข้าเซิร์ฟ Discord Zero Hub ก่อนถึงจะใช้โค้ดได้" }, cors);
+      console.error("promo guild check failed:", err.message);
+    }
+  }
   let r;
   for (let i = 0; i < 3; i++) {
     try {
@@ -1593,7 +1603,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "promo-random-2" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "promo-discord-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
