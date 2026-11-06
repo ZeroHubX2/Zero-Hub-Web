@@ -55,6 +55,13 @@ const commands = [
     ],
   },
   {
+    name: "deletekey",
+    description: "ลบคีย์ถาวร (แอดมิน)",
+    default_member_permissions: ADMIN,
+    dm_permission: false,
+    options: [{ type: STRING, name: "key", description: "คีย์ที่จะลบ", required: true }],
+  },
+  {
     name: "extendkey",
     description: "ต่อเวลาคีย์ (แอดมิน)",
     default_member_permissions: ADMIN,

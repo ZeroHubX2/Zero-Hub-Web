@@ -875,7 +875,11 @@ async function handleAdmin(req, res, cors, path, url) {
   const key = normKey(body.key);
   const k = await getKey(key);
   if (!k) return send(res, 404, { ok: false, error: "ไม่พบคีย์" }, cors);
-  if (path === "/api/admin/keys/revoke") return send(res, 200, { ok: true, key: await updateKey(key, { revoked: body.revoked !== false }) }, cors);
+  if (path === "/api/admin/keys/revoke") {
+    const updated = await updateKey(key, { revoked: body.revoked !== false });
+    if (k.discord_id) await syncBuyerRole(k.discord_id).catch(() => null);
+    return send(res, 200, { ok: true, key: updated }, cors);
+  }
   if (path === "/api/admin/keys/extend") {
     const hours = Number(body.hours);
     if (!(hours > 0 && hours <= 24 * 3650)) return send(res, 400, { ok: false, error: "จำนวนชั่วโมงไม่ถูกต้อง" }, cors);
@@ -894,7 +898,8 @@ async function handleAdmin(req, res, cors, path, url) {
   if (path === "/api/admin/keys/note") return send(res, 200, { ok: true, key: await updateKey(key, { note: clean(body.note, 200) }) }, cors);
   if (path === "/api/admin/keys/delete") {
     await db(`keys?key=eq.${q(key)}`, { method: "DELETE" });
-    return send(res, 200, { ok: true }, cors);
+    const role = k.discord_id ? await syncBuyerRole(k.discord_id).catch(() => null) : null;
+    return send(res, 200, { ok: true, role }, cors);
   }
   send(res, 404, { ok: false, error: "not found" }, cors);
 }
@@ -945,6 +950,24 @@ async function grantBuyerRole(userId) {
   } catch (err) {
     console.error("grant role failed:", err.message);
     return false;
+  }
+}
+
+async function syncBuyerRole(discordId) {
+  const id = String(discordId || "");
+  if (!/^\d{15,25}$/.test(id) || !DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID || !DISCORD_BUYER_ROLE_ID) return null;
+  const rows = await db(`keys?select=revoked,expires_at&discord_id=eq.${q(id)}`);
+  const now = Date.now();
+  const hasValid = rows.some((k) => !k.revoked && (!k.expires_at || new Date(k.expires_at).getTime() > now));
+  if (hasValid) return (await grantBuyerRole(id)) ? "kept" : null;
+  try {
+    await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${id}/roles/${DISCORD_BUYER_ROLE_ID}`, "DELETE");
+    buyerRemoved.add(id);
+    postWebhook(SALES_WEBHOOK_URL, { username: "ZeroHub Shop", content: `🔻 ถอดยศ Buyer จาก <@${id}> แล้ว (ไม่มีคีย์ที่ใช้งานได้เหลือ)` });
+    return "removed";
+  } catch (err) {
+    if (!/discord 404/.test(err.message)) console.error("sync buyer role failed:", id, err.message);
+    return null;
   }
 }
 
@@ -1008,7 +1031,7 @@ const langOf = (body) => (String((body && body.locale) || "").toLowerCase().star
 async function runCommand(name, opts, member, user, L = "th") {
   const uid = (member && member.user && member.user.id) || (user && user.id);
   const admin = discordIsAdmin(member);
-  const adminOnly = ["genkey", "keys", "revokekey", "extendkey"];
+  const adminOnly = ["genkey", "keys", "revokekey", "extendkey", "deletekey"];
   if (adminOnly.includes(name) && !admin) return { content: T(L, "คำสั่งนี้สำหรับแอดมินเท่านั้น", "This command is for admins only") };
 
   if (name === "genkey") {
@@ -1034,7 +1057,17 @@ async function runCommand(name, opts, member, user, L = "th") {
     if (!k) return { content: "ไม่พบคีย์" };
     const revoked = opts.undo !== true;
     await updateKey(k.key, { revoked });
-    return { content: `${revoked ? "ระงับ" : "ยกเลิกการระงับ"}คีย์ \`${k.key}\` แล้ว` };
+    const role = k.discord_id ? await syncBuyerRole(k.discord_id).catch(() => null) : null;
+    const roleText = role === "removed" ? `\nถอดยศ Buyer จาก <@${k.discord_id}> แล้ว` : role === "kept" && !revoked ? `\nให้ยศ Buyer กับ <@${k.discord_id}> แล้ว` : "";
+    return { content: `${revoked ? "ระงับ" : "ยกเลิกการระงับ"}คีย์ \`${k.key}\` แล้ว${roleText}` };
+  }
+  if (name === "deletekey") {
+    const k = await getKey(normKey(opts.key));
+    if (!k) return { content: "ไม่พบคีย์" };
+    await db(`keys?key=eq.${q(k.key)}`, { method: "DELETE" });
+    const role = k.discord_id ? await syncBuyerRole(k.discord_id).catch(() => null) : null;
+    const roleText = role === "removed" ? `\nถอดยศ Buyer จาก <@${k.discord_id}> แล้ว` : role === "kept" ? `\n<@${k.discord_id}> ยังมีคีย์อื่นที่ใช้ได้ ยศ Buyer ยังอยู่` : "";
+    return { content: `ลบคีย์ \`${k.key}\` ถาวรแล้ว${roleText}` };
   }
   if (name === "extendkey") {
     const k = await getKey(normKey(opts.key));
@@ -1432,7 +1465,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "buyer-sweep-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "buyer-sync-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
