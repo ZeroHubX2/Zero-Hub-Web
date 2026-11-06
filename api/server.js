@@ -724,6 +724,55 @@ async function handleTopup(req, res, cors) {
   send(res, 200, { ok: true, amount: got, balance: Number(w.balance) }, cors);
 }
 
+const PROMO_TEXT = {
+  invalid: "ไม่พบโค้ดนี้",
+  inactive: "โค้ดนี้ปิดใช้งานแล้ว",
+  expired: "โค้ดนี้หมดอายุแล้ว",
+  used_up: "โค้ดนี้ถูกใช้ครบจำนวนแล้ว",
+  already: "คุณใช้โค้ดนี้ไปแล้ว",
+};
+const normCode = (v) => String(v || "").trim().toUpperCase().replace(/\s+/g, "");
+const validCode = (c) => /^[A-Z0-9_-]{3,32}$/.test(c);
+
+async function handlePromoRedeem(req, res, cors) {
+  const u = await withUser(req, res, cors);
+  if (!u) return;
+  if (webKeyLimited(clientIp(req))) return send(res, 429, { ok: false, error: "ลองบ่อยเกินไป รอสักครู่" }, cors);
+  const body = await readJson(req);
+  const code = normCode(body.code);
+  if (!validCode(code)) return send(res, 400, { ok: false, error: PROMO_TEXT.invalid }, cors);
+  let r;
+  for (let i = 0; i < 3; i++) {
+    try {
+      [r] = await db("rpc/promo_redeem", { method: "POST", body: { p_code: code, p_user: u.id, p_key: newKey() } });
+      break;
+    } catch (err) {
+      if (err.code !== "23505" || i === 2) throw err;
+    }
+  }
+  if (!r || r.status !== "ok") return send(res, 400, { ok: false, status: r && r.status, error: PROMO_TEXT[r && r.status] || PROMO_TEXT.invalid }, cors);
+  const who = `${userName(u)} (${u.email})`;
+  if (r.kind === "points") {
+    postWebhook(SALES_WEBHOOK_URL, {
+      username: "ZeroHub Shop",
+      embeds: [{ title: "🎁 ใช้โค้ดรับพอยต์", color: 0xff2a4b, fields: [{ name: "ผู้ใช้", value: who }, { name: "โค้ด", value: code, inline: true }, { name: "พอยต์", value: String(Number(r.points)), inline: true }], timestamp: new Date().toISOString() }],
+    });
+    return send(res, 200, { ok: true, kind: "points", points: Number(r.points), balance: Number(r.balance) }, cors);
+  }
+  let [k] = await db(`keys?select=*&id=eq.${r.key_id}`);
+  const discordId = discordIdOf(u);
+  if (discordId) {
+    k = (await updateKey(k.key, { discord_id: discordId }).catch(() => null)) || k;
+    grantBuyerRole(discordId).catch(() => {});
+  }
+  const tier = await getTier(k.tier);
+  postWebhook(SALES_WEBHOOK_URL, {
+    username: "ZeroHub Shop",
+    embeds: [{ title: "🎁 ใช้โค้ดรับคีย์ฟรี", color: 0xff2a4b, fields: [{ name: "ผู้ใช้", value: who }, { name: "โค้ด", value: code, inline: true }, { name: "แพ็กเกจ", value: tier ? tier.name : k.tier, inline: true }, { name: "คีย์", value: `||${k.key}||`, inline: true }], timestamp: new Date().toISOString() }],
+  });
+  return send(res, 200, { ok: true, kind: "key", key: keyView(k, tier && tier.name) }, cors);
+}
+
 async function handleBuy(req, res, cors) {
   const u = await withUser(req, res, cors);
   if (!u) return;
@@ -836,6 +885,9 @@ async function handleAdmin(req, res, cors, path, url) {
     const [keys, tiers] = await Promise.all([db(qs), getTiers(true)]);
     return send(res, 200, { ok: true, keys, tiers }, cors);
   }
+  if (req.method === "GET" && path === "/api/admin/promos") {
+    return send(res, 200, { ok: true, promos: await db("promo_codes?select=*&order=created_at.desc&limit=200") }, cors);
+  }
   if (req.method === "GET" && path === "/api/admin/tiers") {
     return send(res, 200, { ok: true, tiers: await getTiers(true) }, cors);
   }
@@ -871,6 +923,39 @@ async function handleAdmin(req, res, cors, path, url) {
     if (body.name !== undefined) patch.name = clean(body.name, 40);
     const rows = await db(`key_tiers?id=eq.${q(id)}`, { method: "PATCH", body: patch, prefer: "return=representation" });
     return send(res, rows.length ? 200 : 404, { ok: !!rows.length, tier: rows[0] }, cors);
+  }
+  if (path === "/api/admin/promos") {
+    let code = normCode(body.code);
+    if (!code) code = "ZH" + crypto.randomBytes(4).toString("hex").toUpperCase();
+    if (!validCode(code)) return send(res, 400, { ok: false, error: "โค้ดใช้ได้เฉพาะ A-Z 0-9 - _ ยาว 3-32 ตัว" }, cors);
+    const kind = body.kind === "key" ? "key" : "points";
+    const row = { code, kind, max_uses: Math.min(100000, Math.max(1, Math.floor(Number(body.max_uses) || 1))), note: clean(body.note, 200) };
+    if (kind === "points") {
+      const pts = Math.round(Number(body.points) * 100) / 100;
+      if (!(pts > 0 && pts <= 100000)) return send(res, 400, { ok: false, error: "จำนวนพอยต์ไม่ถูกต้อง" }, cors);
+      row.points = pts;
+    } else {
+      const tier = await getTier(clean(body.tier, 20));
+      if (!tier) return send(res, 400, { ok: false, error: "ไม่พบแพ็กเกจ" }, cors);
+      row.tier = tier.id;
+    }
+    const days = Number(body.expires_days);
+    if (days > 0) row.expires_at = new Date(Date.now() + Math.min(days, 3650) * 86400000).toISOString();
+    try {
+      const [made] = await db("promo_codes", { method: "POST", body: row, prefer: "return=representation" });
+      return send(res, 200, { ok: true, promo: made }, cors);
+    } catch (err) {
+      if (err.code === "23505" || err.status === 409) return send(res, 409, { ok: false, error: "โค้ดนี้มีอยู่แล้ว" }, cors);
+      throw err;
+    }
+  }
+  if (path === "/api/admin/promos/toggle") {
+    const rows = await db(`promo_codes?code=eq.${q(normCode(body.code))}`, { method: "PATCH", body: { active: !!body.active }, prefer: "return=representation" });
+    return send(res, rows.length ? 200 : 404, { ok: !!rows.length, promo: rows[0] }, cors);
+  }
+  if (path === "/api/admin/promos/delete") {
+    await db(`promo_codes?code=eq.${q(normCode(body.code))}`, { method: "DELETE" });
+    return send(res, 200, { ok: true }, cors);
   }
   const key = normKey(body.key);
   const k = await getKey(key);
@@ -1480,7 +1565,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "sb-keys-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "promo-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
@@ -1496,6 +1581,7 @@ async function route(req, res) {
   if (m === "POST" && path === "/api/me/resethwid") return handleUserReset(req, res, cors);
   if (m === "POST" && path === "/api/wallet/topup") return handleTopup(req, res, cors);
   if (m === "POST" && path === "/api/shop/buy") return handleBuy(req, res, cors);
+  if (m === "POST" && path === "/api/promo/redeem") return handlePromoRedeem(req, res, cors);
   if (m === "POST" && path === "/api/discord/interactions") return handleInteraction(req, res);
   if (path.startsWith("/api/admin/")) return handleAdmin(req, res, cors, path, url);
   send(res, 404, { ok: false, error: "not found" }, cors);
