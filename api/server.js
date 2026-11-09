@@ -1291,13 +1291,27 @@ async function discordApi(path, method, body) {
   return r.status === 204 ? null : r.json();
 }
 
-const buyerRemoved = new Set();
+async function hasBuyerRole(userId) {
+  try {
+    const m = await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${userId}`, "GET");
+    return (m.roles || []).includes(DISCORD_BUYER_ROLE_ID);
+  } catch (err) {
+    if (/discord 404/.test(err.message)) return false;
+    throw err;
+  }
+}
+
+async function removeBuyerRole(id) {
+  if (!(await hasBuyerRole(id))) return false;
+  await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${id}/roles/${DISCORD_BUYER_ROLE_ID}`, "DELETE");
+  postWebhook(SALES_WEBHOOK_URL, { username: "ZeroHub Shop", content: `🔻 ถอดยศ Buyer จาก <@${id}> แล้ว (ไม่มีคีย์ที่ใช้งานได้เหลือ)` });
+  return true;
+}
 
 async function grantBuyerRole(userId) {
   if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID || !DISCORD_BUYER_ROLE_ID) return false;
   try {
     await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${userId}/roles/${DISCORD_BUYER_ROLE_ID}`, "PUT");
-    buyerRemoved.delete(String(userId));
     return true;
   } catch (err) {
     console.error("grant role failed:", err.message);
@@ -1313,10 +1327,7 @@ async function syncBuyerRole(discordId) {
   const hasValid = rows.some((k) => !k.revoked && (!k.expires_at || new Date(k.expires_at).getTime() > now));
   if (hasValid) return (await grantBuyerRole(id)) ? "kept" : null;
   try {
-    await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${id}/roles/${DISCORD_BUYER_ROLE_ID}`, "DELETE");
-    buyerRemoved.add(id);
-    postWebhook(SALES_WEBHOOK_URL, { username: "ZeroHub Shop", content: `🔻 ถอดยศ Buyer จาก <@${id}> แล้ว (ไม่มีคีย์ที่ใช้งานได้เหลือ)` });
-    return "removed";
+    return (await removeBuyerRole(id)) ? "removed" : "none";
   } catch (err) {
     if (!/discord 404/.test(err.message)) console.error("sync buyer role failed:", id, err.message);
     return null;
@@ -1340,15 +1351,11 @@ async function sweepBuyerRoles() {
     if (!k.revoked && (!k.expires_at || new Date(k.expires_at).getTime() > now)) valid.add(id);
   }
   for (const id of seen) {
-    if (valid.has(id) || buyerRemoved.has(id) || !/^\d{15,25}$/.test(id)) continue;
+    if (valid.has(id) || !/^\d{15,25}$/.test(id)) continue;
     try {
-      await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${id}/roles/${DISCORD_BUYER_ROLE_ID}`, "DELETE");
-      buyerRemoved.add(id);
-      console.log("buyer sweep: removed role from", id);
-      postWebhook(SALES_WEBHOOK_URL, { username: "ZeroHub Shop", content: `🔻 ถอดยศ Buyer จาก <@${id}> แล้ว (ไม่มีคีย์ที่ใช้งานได้เหลือ)` });
+      if (await removeBuyerRole(id)) console.log("buyer sweep: removed role from", id);
     } catch (err) {
-      if (/discord 404/.test(err.message)) buyerRemoved.add(id);
-      else console.error("buyer sweep: remove failed:", id, err.message);
+      console.error("buyer sweep: remove failed:", id, err.message);
     }
     await new Promise((r) => setTimeout(r, 1200));
   }
@@ -1863,7 +1870,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "pages-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "buyer-fix-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
@@ -1899,6 +1906,6 @@ http
     console.log(`ZeroHub API on :${PORT}`);
     startGateway();
     setTimeout(() => sweepBuyerRoles().catch(() => {}), 2 * 60 * 1000).unref();
-    setInterval(() => sweepBuyerRoles().catch(() => {}), 60 * 60 * 1000).unref();
+    setInterval(() => sweepBuyerRoles().catch(() => {}), 15 * 60 * 1000).unref();
     setInterval(() => dailySummaryTick().catch((err) => console.error("daily summary:", err.message)), 5 * 60 * 1000).unref();
   });
