@@ -871,6 +871,177 @@ async function handleStats(req, res, cors) {
   send(res, 200, { ok: true, ...(await getStats()) }, cors);
 }
 
+const BKK_MS = 7 * 3600e3;
+const DAY_MS = 86400e3;
+const SALE_METHODS = { bank: "โอนธนาคาร", truemoney: "TrueMoney (โอนตรง)", other: "อื่น ๆ" };
+const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || "")) && !isNaN(Date.parse(`${s}T00:00:00+07:00`));
+const bkkYmd = (d = new Date()) => new Date(new Date(d).getTime() + BKK_MS).toISOString().slice(0, 10);
+const ymdStart = (ymd) => new Date(`${ymd}T00:00:00+07:00`);
+const addDays = (ymd, n) => bkkYmd(ymdStart(ymd).getTime() + n * DAY_MS);
+const money = (n) => Math.round(Number(n || 0) * 100) / 100;
+const baht = (n) => money(n).toLocaleString("en-US", { maximumFractionDigits: 2 });
+
+function salesRange(period, month, from, to) {
+  const today = bkkYmd();
+  const m = String(month || "").match(/^(\d{4})-(\d{2})$/);
+  if (m) {
+    const first = `${m[1]}-${m[2]}-01`;
+    const next = new Date(Date.UTC(Number(m[1]), Number(m[2]), 1)).toISOString().slice(0, 10);
+    return { from: first, to: addDays(next, -1), label: `เดือน ${m[2]}/${m[1]}` };
+  }
+  if (isYmd(from) || isYmd(to)) {
+    let a = isYmd(from) ? from : to;
+    let b = isYmd(to) ? to : from;
+    if (a > b) [a, b] = [b, a];
+    return { from: a, to: b, label: a === b ? `วันที่ ${a}` : `${a} ถึง ${b}` };
+  }
+  const monthStart = today.slice(0, 8) + "01";
+  if (period === "yesterday") return { from: addDays(today, -1), to: addDays(today, -1), label: "เมื่อวาน" };
+  if (period === "7d") return { from: addDays(today, -6), to: today, label: "7 วันล่าสุด" };
+  if (period === "30d") return { from: addDays(today, -29), to: today, label: "30 วันล่าสุด" };
+  if (period === "month") return { from: monthStart, to: today, label: "เดือนนี้" };
+  if (period === "lastmonth") {
+    const end = addDays(monthStart, -1);
+    return { from: end.slice(0, 8) + "01", to: end, label: "เดือนที่แล้ว" };
+  }
+  if (period === "all") return { from: "2026-01-01", to: today, label: "ทั้งหมด" };
+  return { from: today, to: today, label: "วันนี้" };
+}
+
+async function dbAll(path) {
+  const out = [];
+  for (let offset = 0; offset < 100000; offset += 1000) {
+    const rows = await db(`${path}&limit=1000&offset=${offset}`);
+    out.push(...rows);
+    if (rows.length < 1000) break;
+  }
+  return out;
+}
+
+async function salesReport(range) {
+  const start = ymdStart(range.from).toISOString();
+  const end = ymdStart(addDays(range.to, 1)).toISOString();
+  const span = (col) => `and=${q(`(${col}.gte."${start}",${col}.lt."${end}")`)}`;
+  const [topups, bills, keys] = await Promise.all([
+    dbAll(`wallet_tx?select=amount,created_at&kind=eq.topup&${span("created_at")}&order=created_at.asc`),
+    dbAll(`sales?select=*&${span("sold_at")}&order=sold_at.desc`),
+    dbAll(`keys?select=tier,source,created_at&${span("created_at")}&order=created_at.asc`),
+  ]);
+  const days = new Map();
+  const dayRow = (ymd) => {
+    if (!days.has(ymd)) days.set(ymd, { day: ymd, truemoney: 0, truemoney_n: 0, manual: 0, manual_n: 0, total: 0 });
+    return days.get(ymd);
+  };
+  for (let d = range.from; d <= range.to && days.size < 4000; d = addDays(d, 1)) dayRow(d);
+  const r = { ...range, total: 0, truemoney: { sum: 0, n: 0 }, manual: { sum: 0, n: 0 }, methods: {}, keys: { shop: 0, admin: 0, discord: 0, promo: 0, total: 0, tiers: {} } };
+  for (const t of topups) {
+    const a = money(t.amount);
+    const row = dayRow(bkkYmd(t.created_at));
+    row.truemoney += a;
+    row.truemoney_n++;
+    r.truemoney.sum += a;
+    r.truemoney.n++;
+  }
+  for (const b of bills) {
+    const a = money(b.amount);
+    const row = dayRow(bkkYmd(b.sold_at));
+    row.manual += a;
+    row.manual_n++;
+    r.manual.sum += a;
+    r.manual.n++;
+    const m = (r.methods[b.method] = r.methods[b.method] || { sum: 0, n: 0 });
+    m.sum += a;
+    m.n++;
+  }
+  for (const k of keys) {
+    r.keys[k.source] = (r.keys[k.source] || 0) + 1;
+    r.keys.total++;
+    if (k.source !== "promo") r.keys.tiers[k.tier] = (r.keys.tiers[k.tier] || 0) + 1;
+  }
+  r.days = [...days.values()].sort((a, b) => (a.day < b.day ? -1 : 1)).map((d) => ({ ...d, truemoney: money(d.truemoney), manual: money(d.manual), total: money(d.truemoney + d.manual) }));
+  const months = new Map();
+  for (const d of r.days) {
+    const mk = d.day.slice(0, 7);
+    const mo = months.get(mk) || { month: mk, truemoney: 0, manual: 0, total: 0, n: 0 };
+    mo.truemoney = money(mo.truemoney + d.truemoney);
+    mo.manual = money(mo.manual + d.manual);
+    mo.total = money(mo.total + d.total);
+    mo.n += d.truemoney_n + d.manual_n;
+    months.set(mk, mo);
+  }
+  r.months = [...months.values()];
+  r.truemoney.sum = money(r.truemoney.sum);
+  r.manual.sum = money(r.manual.sum);
+  for (const m of Object.values(r.methods)) m.sum = money(m.sum);
+  r.total = money(r.truemoney.sum + r.manual.sum);
+  const best = r.days.reduce((a, d) => (d.total > (a ? a.total : 0) ? d : a), null);
+  r.best_day = best;
+  r.bills = bills.slice(0, 300);
+  return r;
+}
+
+async function addSale(fields) {
+  const amount = money(fields.amount);
+  if (!(amount > 0 && amount <= 1000000)) throw Object.assign(new Error("ยอดเงินไม่ถูกต้อง"), { user: true });
+  const row = {
+    amount,
+    method: SALE_METHODS[fields.method] ? fields.method : "bank",
+    buyer: clean(fields.buyer, 100),
+    discord_id: clean(fields.discord_id, 25).replace(/\D/g, "") || null,
+    note: clean(fields.note, 200),
+    created_by: clean(fields.created_by, 60),
+  };
+  if (fields.date) {
+    if (!isYmd(fields.date)) throw Object.assign(new Error("วันที่ต้องเป็นแบบ ปปปป-ดด-วว เช่น 2026-11-09"), { user: true });
+    if (fields.date > bkkYmd()) throw Object.assign(new Error("ลงบิลวันในอนาคตไม่ได้"), { user: true });
+    row.sold_at = fields.date === bkkYmd() ? new Date().toISOString() : new Date(ymdStart(fields.date).getTime() + 12 * 3600e3).toISOString();
+  }
+  const [made] = await db("sales", { method: "POST", body: row, prefer: "return=representation" });
+  return made;
+}
+
+function salesText(r, { daily = true } = {}) {
+  const lines = [`📊 **ยอดขาย ${r.label}**  (${r.from === r.to ? r.from : `${r.from} → ${r.to}`})`, `💰 รวม **${baht(r.total)} บาท**`];
+  lines.push(`• TrueMoney อั่งเปา (เว็บ): ${baht(r.truemoney.sum)} บาท (${r.truemoney.n} ครั้ง)`);
+  for (const [k, label] of Object.entries(SALE_METHODS)) {
+    const m = r.methods[k];
+    if (m) lines.push(`• ${label} (ลงบิล): ${baht(m.sum)} บาท (${m.n} บิล)`);
+  }
+  if (!r.manual.n) lines.push("• ลงบิลโอนเอง: 0 บาท");
+  const k = r.keys;
+  lines.push(`🔑 คีย์ออก ${k.total} คีย์ · ซื้อบนเว็บ ${k.shop || 0} · แอดมิน ${k.admin || 0} · บอท ${k.discord || 0} · โค้ดฟรี ${k.promo || 0}`);
+  if (r.days.length > 1 && r.best_day && r.best_day.total > 0) lines.push(`🏆 วันที่ขายดีสุด ${r.best_day.day} · ${baht(r.best_day.total)} บาท`);
+  if (daily && r.days.length > 1) {
+    const many = r.days.length > 31;
+    lines.push("", many ? "**รายเดือน**" : "**รายวัน**");
+    const rows = many
+      ? r.months.map((m) => `\`${m.month}\` ${baht(m.total)} บาท`)
+      : r.days.filter((d) => d.total > 0 || r.days.length <= 7).map((d) => `\`${d.day.slice(8)}/${d.day.slice(5, 7)}\` ${baht(d.total)} บาท${d.manual ? ` (บิล ${baht(d.manual)})` : ""}`);
+    lines.push(...(rows.length ? rows : ["ยังไม่มียอด"]));
+  }
+  let out = lines.join("\n");
+  if (out.length > 1950) out = out.slice(0, 1940) + "\n…";
+  return out;
+}
+
+async function dailySummaryTick() {
+  if (!SALES_WEBHOOK_URL) return;
+  const nowBkk = new Date(Date.now() + BKK_MS);
+  if (nowBkk.getUTCHours() !== 0) return;
+  const day = addDays(bkkYmd(), -1);
+  const [meta] = await db("shop_meta?select=v&k=eq.daily_summary");
+  if (meta && meta.v >= day) return;
+  await db("shop_meta", { method: "POST", body: { k: "daily_summary", v: day }, prefer: "resolution=merge-duplicates" });
+  const [d, mtd] = await Promise.all([salesReport({ from: day, to: day, label: `วันที่ ${day}` }), salesReport({ from: day.slice(0, 8) + "01", to: day, label: `เดือน ${day.slice(5, 7)}/${day.slice(0, 4)} ถึงวันที่ ${day.slice(8)}` })]);
+  await postWebhook(SALES_WEBHOOK_URL, {
+    username: "ZeroHub Shop",
+    embeds: [
+      { title: "🌙 สรุปยอดประจำวัน", color: 0xff2a4b, description: salesText(d, { daily: false }) },
+      { color: 0xf5b82e, description: salesText(mtd, { daily: false }) },
+    ],
+  });
+}
+
 function isAdmin(req) {
   const h = req.headers.authorization || "";
   const token = h.startsWith("Bearer ") ? h.slice(7).trim() : "";
@@ -911,6 +1082,11 @@ async function handleAdmin(req, res, cors, path, url) {
   if (req.method === "GET" && path === "/api/admin/tiers") {
     return send(res, 200, { ok: true, tiers: await getTiers(true) }, cors);
   }
+  if (req.method === "GET" && path === "/api/admin/sales") {
+    const p = url.searchParams;
+    const range = salesRange(p.get("period"), p.get("month"), p.get("from"), p.get("to"));
+    return send(res, 200, { ok: true, report: await salesReport(range), methods: SALE_METHODS }, cors);
+  }
   if (req.method !== "POST") return send(res, 404, { ok: false, error: "not found" }, cors);
   const body = await readJson(req);
   if (path === "/api/admin/keys") {
@@ -921,6 +1097,21 @@ async function handleAdmin(req, res, cors, path, url) {
     const keys = await createKeys(tier, count, { source: "admin", note: clean(body.note, 200), discord_id: discordId });
     if (discordId) grantBuyerRole(discordId).catch(() => {});
     return send(res, 200, { ok: true, keys }, cors);
+  }
+  if (path === "/api/admin/sales") {
+    try {
+      const sale = await addSale({ ...body, created_by: "เว็บแอดมิน" });
+      return send(res, 200, { ok: true, sale }, cors);
+    } catch (err) {
+      if (err.user) return send(res, 400, { ok: false, error: err.message }, cors);
+      throw err;
+    }
+  }
+  if (path === "/api/admin/sales/delete") {
+    const id = Math.floor(Number(body.id));
+    if (!(id > 0)) return send(res, 400, { ok: false, error: "ไม่พบบิล" }, cors);
+    const rows = await db(`sales?id=eq.${id}`, { method: "DELETE", prefer: "return=representation" });
+    return send(res, rows.length ? 200 : 404, { ok: !!rows.length, error: rows.length ? undefined : "ไม่พบบิล" }, cors);
   }
   if (path === "/api/admin/users") {
     const rows = await db("rpc/shop_find_users", { method: "POST", body: { p_q: clean(body.q, 80) } });
@@ -1159,8 +1350,38 @@ const langOf = (body) => (String((body && body.locale) || "").toLowerCase().star
 async function runCommand(name, opts, member, user, L = "th") {
   const uid = (member && member.user && member.user.id) || (user && user.id);
   const admin = discordIsAdmin(member);
-  const adminOnly = ["genkey", "keys", "revokekey", "extendkey", "deletekey"];
+  const adminOnly = ["genkey", "keys", "revokekey", "extendkey", "deletekey", "sales", "addsale", "delsale", "bills"];
   if (adminOnly.includes(name) && !admin) return { content: T(L, "คำสั่งนี้สำหรับแอดมินเท่านั้น", "This command is for admins only") };
+
+  if (name === "sales") {
+    const range = salesRange(opts.period, opts.month, opts.from, opts.to);
+    return { content: salesText(await salesReport(range)) };
+  }
+  if (name === "addsale") {
+    let sale;
+    try {
+      sale = await addSale({ amount: opts.amount, method: opts.method, discord_id: opts.user || "", buyer: opts.name || "", note: opts.note || "", date: opts.date || "", created_by: `discord:${uid}` });
+    } catch (err) {
+      if (err.user) return { content: err.message };
+      throw err;
+    }
+    const today = await salesReport(salesRange("today"));
+    const who = sale.discord_id ? ` จาก <@${sale.discord_id}>` : sale.buyer ? ` จาก ${sale.buyer}` : "";
+    return { content: `✅ ลงบิล #${sale.id} แล้ว: **${baht(sale.amount)} บาท** (${SALE_METHODS[sale.method]})${who}\nวันที่ ${bkkYmd(sale.sold_at)}${sale.note ? ` · ${sale.note}` : ""}\n\nยอดรวมวันนี้ตอนนี้ ${baht(today.total)} บาท\nลงผิด? ใช้ /delsale id:${sale.id}` };
+  }
+  if (name === "delsale") {
+    const id = Math.floor(Number(opts.id));
+    const rows = id > 0 ? await db(`sales?id=eq.${id}`, { method: "DELETE", prefer: "return=representation" }) : [];
+    if (!rows.length) return { content: `ไม่พบบิล #${opts.id}` };
+    return { content: `🗑️ ลบบิล #${id} (${baht(rows[0].amount)} บาท) แล้ว` };
+  }
+  if (name === "bills") {
+    const range = salesRange(opts.period || "7d", opts.month);
+    const r = await salesReport(range);
+    if (!r.bills.length) return { content: `ไม่มีบิลที่ลงเองใน${r.label}` };
+    const rows = r.bills.slice(0, 25).map((b) => `#${b.id} · ${bkkYmd(b.sold_at)} · **${baht(b.amount)}** · ${SALE_METHODS[b.method] || b.method}${b.discord_id ? ` · <@${b.discord_id}>` : b.buyer ? ` · ${b.buyer}` : ""}${b.note ? ` · ${b.note}` : ""}`);
+    return { content: `🧾 บิลที่ลงเอง ${r.label} (${r.bills.length} บิล รวม ${baht(r.manual.sum)} บาท)\n${rows.join("\n")}`.slice(0, 1950) };
+  }
 
   if (name === "genkey") {
     const tier = await getTier(opts.tier);
@@ -1609,7 +1830,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "aotr-2" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "sales-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
@@ -1646,4 +1867,5 @@ http
     startGateway();
     setTimeout(() => sweepBuyerRoles().catch(() => {}), 2 * 60 * 1000).unref();
     setInterval(() => sweepBuyerRoles().catch(() => {}), 60 * 60 * 1000).unref();
+    setInterval(() => dailySummaryTick().catch((err) => console.error("daily summary:", err.message)), 5 * 60 * 1000).unref();
   });

@@ -21,6 +21,22 @@ const TIERS = [
   { name: "ถาวร", value: "lifetime" },
 ];
 
+const PERIODS = [
+  { name: "วันนี้", value: "today" },
+  { name: "เมื่อวาน", value: "yesterday" },
+  { name: "7 วันล่าสุด", value: "7d" },
+  { name: "30 วันล่าสุด", value: "30d" },
+  { name: "เดือนนี้", value: "month" },
+  { name: "เดือนที่แล้ว", value: "lastmonth" },
+  { name: "ทั้งหมด", value: "all" },
+];
+
+const METHODS = [
+  { name: "โอนธนาคาร", value: "bank" },
+  { name: "TrueMoney (โอนตรง)", value: "truemoney" },
+  { name: "อื่น ๆ", value: "other" },
+];
+
 const commands = [
   {
     name: "genkey",
@@ -87,6 +103,49 @@ const commands = [
     description: "รีเซ็ต HWID เพื่อย้ายเครื่อง (วันละครั้ง)",
     dm_permission: false,
     options: [{ type: STRING, name: "key", description: "คีย์ (ไม่ต้องใส่ถ้ามีคีย์เดียว)" }],
+  },
+  {
+    name: "sales",
+    description: "ดูยอดขายร้าน รายวัน/รายเดือน (แอดมิน)",
+    default_member_permissions: ADMIN,
+    dm_permission: false,
+    options: [
+      { type: STRING, name: "period", description: "ช่วงเวลา (ค่าเริ่มต้น = วันนี้)", choices: PERIODS },
+      { type: STRING, name: "month", description: "ดูทั้งเดือน เช่น 2026-11", max_length: 7 },
+      { type: STRING, name: "from", description: "ตั้งแต่วันที่ เช่น 2026-11-01", max_length: 10 },
+      { type: STRING, name: "to", description: "ถึงวันที่ เช่น 2026-11-09", max_length: 10 },
+    ],
+  },
+  {
+    name: "addsale",
+    description: "ลงบิลยอดขายที่ลูกค้าโอนเอง (แอดมิน)",
+    default_member_permissions: ADMIN,
+    dm_permission: false,
+    options: [
+      { type: NUMBER, name: "amount", description: "ยอดเงิน (บาท)", required: true, min_value: 0.01, max_value: 1000000 },
+      { type: STRING, name: "method", description: "ช่องทาง (ค่าเริ่มต้น = โอนธนาคาร)", choices: METHODS },
+      { type: USER, name: "user", description: "ลูกค้า (ถ้าอยู่ในดิสคอร์ด)" },
+      { type: STRING, name: "name", description: "ชื่อลูกค้า (ถ้าไม่ได้เลือก user)", max_length: 100 },
+      { type: STRING, name: "note", description: "บันทึก เช่น ซื้อคีย์ 7 วัน", max_length: 200 },
+      { type: STRING, name: "date", description: "วันที่โอน เช่น 2026-11-08 (ไม่ใส่ = วันนี้)", max_length: 10 },
+    ],
+  },
+  {
+    name: "bills",
+    description: "ดูรายการบิลที่ลงเอง (แอดมิน)",
+    default_member_permissions: ADMIN,
+    dm_permission: false,
+    options: [
+      { type: STRING, name: "period", description: "ช่วงเวลา (ค่าเริ่มต้น = 7 วันล่าสุด)", choices: PERIODS },
+      { type: STRING, name: "month", description: "ดูทั้งเดือน เช่น 2026-11", max_length: 7 },
+    ],
+  },
+  {
+    name: "delsale",
+    description: "ลบบิลที่ลงผิด (แอดมิน)",
+    default_member_permissions: ADMIN,
+    dm_permission: false,
+    options: [{ type: INTEGER, name: "id", description: "เลขบิล เช่น 12", required: true, min_value: 1 }],
   },
   {
     name: "panel",
