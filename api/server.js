@@ -234,6 +234,29 @@ async function db(path, { method = "GET", body, prefer } = {}) {
 
 const q = encodeURIComponent;
 
+async function dbPage(path, size, page) {
+  const headers = SUPABASE_KEY.startsWith("sb_") ? { apikey: SUPABASE_KEY } : { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` };
+  headers.Prefer = "count=exact";
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}&limit=${size}&offset=${(page - 1) * size}`, { headers, signal: AbortSignal.timeout(15000) });
+  const text = await r.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!r.ok && r.status !== 416) {
+    const err = new DbError((data && (data.message || data.hint)) || `db ${r.status}`);
+    err.status = r.status;
+    err.code = data && data.code;
+    throw err;
+  }
+  const m = String(r.headers.get("content-range") || "").match(/\/(\d+)$/);
+  const rows = r.ok ? data : [];
+  return { rows, total: m ? Number(m[1]) : (page - 1) * size + rows.length };
+}
+
+const pageArgs = (url) => {
+  const size = [20, 50, 100].includes(Number(url.searchParams.get("size"))) ? Number(url.searchParams.get("size")) : 20;
+  const page = Math.min(100000, Math.max(1, Math.floor(Number(url.searchParams.get("page")) || 1)));
+  return { size, page };
+};
+
 async function getTiers(all = false) {
   return db(`key_tiers?select=*&order=sort_order.asc${all ? "" : "&is_active=eq.true"}`);
 }
@@ -1057,7 +1080,7 @@ async function handleAdmin(req, res, cors, path, url) {
   if (req.method === "GET" && path === "/api/admin/keys") {
     const term = clean(url.searchParams.get("q"), 60);
     const filter = url.searchParams.get("filter") || "all";
-    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 50));
+    const { size, page } = pageArgs(url);
     const conds = [];
     const t = term.replace(/[^0-9A-Za-z\-]/g, "");
     if (t) conds.push(`or(key.ilike.*${t}*,discord_id.eq.${t},note.ilike.*${t}*)`);
@@ -1066,10 +1089,10 @@ async function handleAdmin(req, res, cors, path, url) {
     if (filter === "expired") conds.push(`expires_at.lt.${now}`);
     if (filter === "revoked") conds.push("revoked.is.true");
     if (filter === "unused") conds.push("activated_at.is.null");
-    let qs = `keys?select=*&order=created_at.desc&limit=${limit}`;
+    let qs = `keys?select=*&order=created_at.desc,id.desc`;
     if (conds.length) qs += `&and=${q(`(${conds.join(",")})`)}`;
-    const [keys, tiers] = await Promise.all([db(qs), getTiers(true)]);
-    return send(res, 200, { ok: true, keys, tiers }, cors);
+    const [{ rows: keys, total }, tiers] = await Promise.all([dbPage(qs, size, page), getTiers(true)]);
+    return send(res, 200, { ok: true, keys, tiers, total, page, size }, cors);
   }
   if (req.method === "GET" && path === "/api/admin/promos") {
     const [promos, prizes] = await Promise.all([
@@ -1114,8 +1137,18 @@ async function handleAdmin(req, res, cors, path, url) {
     return send(res, rows.length ? 200 : 404, { ok: !!rows.length, error: rows.length ? undefined : "ไม่พบบิล" }, cors);
   }
   if (path === "/api/admin/users") {
-    const rows = await db("rpc/shop_find_users", { method: "POST", body: { p_q: clean(body.q, 80) } });
-    return send(res, 200, { ok: true, users: rows }, cors);
+    const size = [20, 50, 100].includes(Number(body.size)) ? Number(body.size) : 20;
+    const page = Math.min(100000, Math.max(1, Math.floor(Number(body.page)) || 1));
+    const p_q = clean(body.q, 80);
+    try {
+      const rows = await db("rpc/shop_find_users_page", { method: "POST", body: { p_q, p_limit: size, p_offset: (page - 1) * size } });
+      const total = rows.length ? Number(rows[0].total) : (page - 1) * size;
+      return send(res, 200, { ok: true, users: rows, total, page, size }, cors);
+    } catch (err) {
+      if (err.code !== "PGRST202" && err.status !== 404) throw err;
+      const all = await db("rpc/shop_find_users", { method: "POST", body: { p_q } });
+      return send(res, 200, { ok: true, users: all.slice((page - 1) * size, page * size), total: all.length, page, size }, cors);
+    }
   }
   if (path === "/api/admin/wallet") {
     const uid = clean(body.user_id, 40);
@@ -1830,7 +1863,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "sales-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "pages-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
