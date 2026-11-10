@@ -1616,7 +1616,7 @@ async function panelMessage() {
           line(),
           text("**🧰 จัดการคีย์ของคุณ · Manage your key**"),
           row(btn("คีย์ของฉัน · My Keys", "📋", 2, "zh:info"), btn("ย้ายเครื่อง · HWID", "🔄", 2, "zh:reset"), btn("เกม · Games", "🎮", 2, "zh:games")),
-          { type: 12, items: [{ media: { url: `${PUBLIC_URL}/assets/panel-banner.gif?v=3` } }] },
+          { type: 12, items: [{ media: { url: `${PUBLIC_URL}/assets/panel-banner.gif?v=4` } }] },
           text("-# 🔐 ทุกปุ่มตอบกลับให้เห็นเฉพาะคุณ · Replies are only visible to you\n-# 🌐 ตอบเป็นภาษาไทยหรืออังกฤษตามภาษาที่ตั้งใน Discord · Replies follow your Discord language"),
           row(btn("เว็บร้าน · Shop", "🌐", 5, SHOP_URL), btn("Discord", "💬", 5, DISCORD_INVITE)),
         ],
@@ -1870,7 +1870,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "gif-banner-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "gif-banner-2" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
