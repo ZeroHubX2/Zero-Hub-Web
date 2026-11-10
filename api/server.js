@@ -1105,6 +1105,16 @@ async function handleAdmin(req, res, cors, path, url) {
   if (req.method === "GET" && path === "/api/admin/tiers") {
     return send(res, 200, { ok: true, tiers: await getTiers(true) }, cors);
   }
+  if (req.method === "GET" && path === "/api/admin/diag") {
+    const t0 = Date.now();
+    try {
+      const r = await fetch(`${DISCORD_API}/users/@me`, { headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}` }, signal: AbortSignal.timeout(10000) });
+      const text = (await r.text()).slice(0, 300);
+      return send(res, 200, { ok: true, status: r.status, ms: Date.now() - t0, retry_after: r.headers.get("retry-after"), global: r.headers.get("x-ratelimit-global"), scope: r.headers.get("x-ratelimit-scope"), cf: r.headers.get("cf-ray"), body: r.status === 200 ? "ok" : text }, cors);
+    } catch (err) {
+      return send(res, 200, { ok: false, ms: Date.now() - t0, error: err.message }, cors);
+    }
+  }
   if (req.method === "GET" && path === "/api/admin/sales") {
     const p = url.searchParams;
     const range = salesRange(p.get("period"), p.get("month"), p.get("from"), p.get("to"));
@@ -1870,7 +1880,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "gif-banner-2" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "diag-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
