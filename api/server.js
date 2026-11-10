@@ -1125,6 +1125,43 @@ async function handleAdmin(req, res, cors, path, url) {
       return send(res, 200, { ok: false, ms: Date.now() - t0, error: err.message }, cors);
     }
   }
+  if (req.method === "GET" && path === "/api/admin/topups") {
+    const hours = Math.min(24 * 31, Math.max(1, Number(url.searchParams.get("hours")) || 24));
+    const since = new Date(Date.now() - hours * 3600e3).toISOString();
+    const rows = await db(`wallet_tx?select=user_id,amount,balance_after,note,created_at&kind=eq.topup&created_at=gte.${q(since)}&order=created_at.desc&limit=200`);
+    const who = {};
+    for (const id of [...new Set(rows.map((r) => r.user_id))]) {
+      const [u] = await db("rpc/shop_find_users", { method: "POST", body: { p_q: id } }).catch(() => []);
+      who[id] = u ? { email: u.email, username: u.username } : null;
+    }
+    return send(res, 200, { ok: true, topups: rows.map((r) => ({ ...r, user: who[r.user_id] })) }, cors);
+  }
+  if (req.method === "POST" && path === "/api/admin/test-webhook") {
+    if (!SALES_WEBHOOK_URL) return send(res, 400, { ok: false, error: "SALES_WEBHOOK_URL not set" }, cors);
+    const r = await discordFetch(`${SALES_WEBHOOK_URL}${SALES_WEBHOOK_URL.includes("?") ? "&" : "?"}wait=true`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: "ZeroHub Shop",
+        allowed_mentions: { parse: [] },
+        embeds: [
+          {
+            title: "🧪 ทดสอบ: เติมพอยต์ (TrueMoney)",
+            color: 0xf5b82e,
+            description: "ข้อความทดสอบจากเซิร์ฟเวอร์ ส่งผ่าน Worker ถ้าเห็นข้อความนี้แปลว่าแจ้งเตือนเติมเงินใช้งานได้",
+            fields: [
+              { name: "ผู้ใช้", value: "ทดสอบ (test@zerohub)" },
+              { name: "ยอด", value: "0 บาท", inline: true },
+              { name: "คงเหลือ", value: "0 พอยต์", inline: true },
+            ],
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    return send(res, 200, { ok: r.ok, status: r.status, via_proxy: !!DISCORD_PROXY_URL }, cors);
+  }
   if (req.method === "GET" && path === "/api/admin/sales") {
     const p = url.searchParams;
     const range = salesRange(p.get("period"), p.get("month"), p.get("from"), p.get("to"));
@@ -1890,7 +1927,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "discord-fix-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "webhook-test-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
