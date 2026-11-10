@@ -1348,14 +1348,19 @@ async function discordApi(path, method, body) {
   return r.status === 204 ? null : r.json();
 }
 
-async function hasBuyerRole(userId) {
+async function memberRoles(userId) {
   try {
     const m = await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${userId}`, "GET");
-    return (m.roles || []).includes(DISCORD_BUYER_ROLE_ID);
+    return m.roles || [];
   } catch (err) {
-    if (/discord 404/.test(err.message)) return false;
+    if (/discord 404/.test(err.message)) return null;
     throw err;
   }
+}
+
+async function hasBuyerRole(userId) {
+  const roles = await memberRoles(userId);
+  return !!roles && roles.includes(DISCORD_BUYER_ROLE_ID);
 }
 
 async function removeBuyerRole(id) {
@@ -1408,11 +1413,18 @@ async function sweepBuyerRoles() {
     if (!k.revoked && (!k.expires_at || new Date(k.expires_at).getTime() > now)) valid.add(id);
   }
   for (const id of seen) {
-    if (valid.has(id) || !/^\d{15,25}$/.test(id)) continue;
+    if (!/^\d{15,25}$/.test(id)) continue;
     try {
-      if (await removeBuyerRole(id)) console.log("buyer sweep: removed role from", id);
+      if (valid.has(id)) {
+        const roles = await memberRoles(id);
+        if (roles && !roles.includes(DISCORD_BUYER_ROLE_ID)) {
+          await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${id}/roles/${DISCORD_BUYER_ROLE_ID}`, "PUT");
+          console.log("buyer sweep: granted role to", id);
+          postWebhook(SALES_WEBHOOK_URL, { username: "ZeroHub Shop", content: `🔺 ให้ยศ Buyer กับ <@${id}> แล้ว (มีคีย์ที่ใช้งานได้แต่ยศตกหล่น)` });
+        }
+      } else if (await removeBuyerRole(id)) console.log("buyer sweep: removed role from", id);
     } catch (err) {
-      console.error("buyer sweep: remove failed:", id, err.message);
+      console.error("buyer sweep: sync failed:", id, err.message);
     }
     await new Promise((r) => setTimeout(r, 1200));
   }
@@ -1927,7 +1939,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "webhook-test-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "buyer-sync-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
