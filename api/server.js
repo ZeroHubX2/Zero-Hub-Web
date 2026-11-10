@@ -49,6 +49,16 @@ const DISCORD_ADMIN_IDS = env("DISCORD_ADMIN_IDS").split(",").map((s) => s.trim(
 const TOPICS = ["สคริปต์ใช้งานไม่ได้", "เสนอแมพใหม่", "เสนอฟีเจอร์", "อื่นๆ"];
 const KEY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const DISCORD_API = "https://discord.com/api/v10";
+const DISCORD_PROXY_URL = env("DISCORD_PROXY_URL").replace(/\/+$/, "");
+const DISCORD_PROXY_SECRET = env("DISCORD_PROXY_SECRET");
+
+function discordFetch(url, init = {}) {
+  if (DISCORD_PROXY_URL && String(url).startsWith("https://discord.com/api/")) {
+    url = DISCORD_PROXY_URL + String(url).slice("https://discord.com".length);
+    init = { ...init, headers: { ...(init.headers || {}), "x-zh-secret": DISCORD_PROXY_SECRET } };
+  }
+  return fetch(url, init);
+}
 
 const limiters = [];
 function limiter(limit, windowMs) {
@@ -384,7 +394,7 @@ function fetchRepoFile(path) {
 async function postWebhook(url, payload) {
   if (!url) return;
   try {
-    await fetch(url, {
+    await discordFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ allowed_mentions: { parse: [] }, ...payload }),
@@ -1108,7 +1118,7 @@ async function handleAdmin(req, res, cors, path, url) {
   if (req.method === "GET" && path === "/api/admin/diag") {
     const t0 = Date.now();
     try {
-      const r = await fetch(`${DISCORD_API}/users/@me`, { headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}` }, signal: AbortSignal.timeout(10000) });
+      const r = await discordFetch(`${DISCORD_API}/users/@me`, { headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}` }, signal: AbortSignal.timeout(10000) });
       const text = (await r.text()).slice(0, 300);
       return send(res, 200, { ok: true, status: r.status, ms: Date.now() - t0, retry_after: r.headers.get("retry-after"), global: r.headers.get("x-ratelimit-global"), scope: r.headers.get("x-ratelimit-scope"), cf: r.headers.get("cf-ray"), body: r.status === 200 ? "ok" : text }, cors);
     } catch (err) {
@@ -1287,7 +1297,7 @@ function verifyDiscord(req, raw) {
 }
 
 async function discordApi(path, method, body) {
-  const r = await fetch(`${DISCORD_API}${path}`, {
+  const r = await discordFetch(`${DISCORD_API}${path}`, {
     method,
     headers: {
       Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
@@ -1519,7 +1529,7 @@ async function runCommand(name, opts, member, user, L = "th") {
 }
 
 async function finishInteraction(token, payload) {
-  const r = await fetch(`${DISCORD_API}/webhooks/${DISCORD_APP_ID}/${token}/messages/@original`, {
+  const r = await discordFetch(`${DISCORD_API}/webhooks/${DISCORD_APP_ID}/${token}/messages/@original`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ allowed_mentions: { parse: [] }, ...payload }),
@@ -1552,13 +1562,19 @@ async function handleInteraction(req, res) {
 }
 
 async function deferred(res, body, work, label) {
+  const failText = { content: T(langOf(body), "เกิดข้อผิดพลาด ลองใหม่อีกครั้ง", "Something went wrong, please try again") };
+  const job = Promise.resolve()
+    .then(work)
+    .catch((err) => {
+      console.error("interaction failed:", label, err.message);
+      return failText;
+    });
+  let timer;
+  const quick = await Promise.race([job, new Promise((r) => (timer = setTimeout(() => r(null), 2300)))]);
+  clearTimeout(timer);
+  if (quick) return send(res, 200, { type: 4, data: { allowed_mentions: { parse: [] }, ...quick, flags: 64 | (quick.flags || 0) } });
   send(res, 200, { type: 5, data: { flags: 64 } });
-  try {
-    await finishInteraction(body.token, await work());
-  } catch (err) {
-    console.error("interaction failed:", label, err.message);
-    await finishInteraction(body.token, { content: T(langOf(body), "เกิดข้อผิดพลาด ลองใหม่อีกครั้ง", "Something went wrong, please try again") }).catch(() => {});
-  }
+  await finishInteraction(body.token, await job).catch((err) => console.error("interaction followup failed:", label, err.message));
 }
 
 const PUBLIC_URL = env("PUBLIC_URL", "https://zerohub-contact.onrender.com").replace(/\/+$/, "");
@@ -1599,7 +1615,7 @@ async function priceLines(L) {
 async function panelMessage() {
   let tiers = [];
   try {
-    tiers = await getTiers();
+    tiers = await Promise.race([getTiers(), new Promise((r) => setTimeout(() => r([]), 1200))]);
   } catch {}
   const priceText = tiers.length
     ? tiers.map((t) => `${TIER_ICONS[t.id] || "🔑"} ${t.name} **\`${t.price}฿\`**`).join("  ·  ")
@@ -1670,21 +1686,15 @@ function keyModal(id, title, required, L) {
 
 async function handlePanelCommand(res, body) {
   if (!discordIsAdmin(body.member)) return send(res, 200, { type: 4, data: { flags: 64, content: "คำสั่งนี้สำหรับแอดมินเท่านั้น" } });
-  await deferred(
-    res,
-    body,
-    async () => {
-      try {
-        await discordApi(`/channels/${body.channel_id}/messages`, "POST", await panelMessage());
-        return { content: "โพสต์แผงคีย์ในห้องนี้แล้ว ✅" };
-      } catch (err) {
-        console.error("panel post failed:", err.message);
-        if (/discord 403/.test(err.message)) return { content: "โพสต์ไม่สำเร็จ ให้บอทมีสิทธิ์ ดูช่อง / ส่งข้อความ / ฝังลิงก์ ในห้องนี้ แล้วลองใหม่" };
-        return { content: `โพสต์ไม่สำเร็จ: \`${err.message.slice(0, 300)}\`` };
-      }
-    },
-    "panel"
-  );
+  const msg = await panelMessage();
+  try {
+    await Promise.race([discordApi(`/channels/${body.channel_id}/messages`, "POST", msg), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2000))]);
+    return send(res, 200, { type: 4, data: { flags: 64, content: "โพสต์แผงคีย์ในห้องนี้แล้ว ✅" } });
+  } catch (err) {
+    console.error("panel post failed:", err.message);
+    if (/discord 403/.test(err.message)) return send(res, 200, { type: 4, data: { flags: 64, content: "โพสต์ไม่สำเร็จ ให้บอทมีสิทธิ์ ดูช่อง / ส่งข้อความ / ฝังลิงก์ ในห้องนี้ แล้วลองใหม่" } });
+    return send(res, 200, { type: 4, data: msg });
+  }
 }
 
 async function handlePanelButton(res, body) {
@@ -1694,7 +1704,7 @@ async function handlePanelButton(res, body) {
   if (id === "zh:reset") return send(res, 200, keyModal("zh:reset_modal", T(L, "ย้ายเครื่อง (รีเซ็ต HWID)", "Reset HWID"), false, L));
   if (id === "zh:script") {
     setTimeout(() => {
-      fetch(`${DISCORD_API}/webhooks/${DISCORD_APP_ID}/${body.token}`, {
+      discordFetch(`${DISCORD_API}/webhooks/${DISCORD_APP_ID}/${body.token}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ flags: 64, content: LOADSTRING, allowed_mentions: { parse: [] } }),
@@ -1880,7 +1890,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "diag-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "discord-fix-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
