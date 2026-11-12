@@ -846,6 +846,7 @@ async function handlePromoRedeem(req, res, cors) {
 // ---------- โอนพร้อมเพย์ + สลิป ----------
 const PROMPTPAY_ID = env("PROMPTPAY_ID").replace(/[^0-9]/g, "");
 const PROMPTPAY_NAME = env("PROMPTPAY_NAME");
+const BANK_ACCOUNT = env("BANK_ACCOUNT");
 const EASYSLIP_KEY = env("EASYSLIP_KEY");
 const EASYSLIP_URL = env("EASYSLIP_URL", "https://api.easyslip.com/v2").replace(/\/+$/, "");
 const SLIP_MIN = 10;
@@ -855,7 +856,7 @@ const slipLimited = limiter(8, 10 * 60 * 1000);
 const missingTable = (err) => err && (err.code === "42P01" || err.code === "PGRST205" || err.status === 404);
 
 async function handleBankInfo(req, res, cors) {
-  send(res, 200, { ok: true, enabled: !!PROMPTPAY_ID, promptpay: PROMPTPAY_ID, name: PROMPTPAY_NAME, min: SLIP_MIN, auto: !!EASYSLIP_KEY }, cors);
+  send(res, 200, { ok: true, enabled: !!PROMPTPAY_ID, promptpay: PROMPTPAY_ID, name: PROMPTPAY_NAME, bank: BANK_ACCOUNT, min: SLIP_MIN, auto: !!EASYSLIP_KEY }, cors);
 }
 
 async function verifySlip(base64) {
@@ -2308,7 +2309,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "bank-slip-2" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "bank-slip-3" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
