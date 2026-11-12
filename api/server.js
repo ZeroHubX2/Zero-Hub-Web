@@ -874,9 +874,11 @@ async function verifySlip(base64) {
   }
   if (!d || d.success !== true) {
     const code = (d && d.error && d.error.code) || `HTTP_${r.status}`;
-    if (code === "SLIP_NOT_FOUND" || code === "VALIDATION_ERROR") return { kind: "bad", code };
-    console.error("easyslip error:", code, d && d.error && d.error.message);
-    return { kind: "manual", reason: `เช็กสลิปอัตโนมัติไม่ได้ (${code})` };
+    const msg = clean(String((d && d.error && d.error.message) || ""), 120);
+    console.error("easyslip error:", code, msg);
+    // อ่านไม่ได้/ระบบเช็กมีปัญหา → ให้แอดมินตรวจแทน (ไม่ตีกลับลูกค้าที่โอนจริง)
+    if (code === "SLIP_NOT_FOUND") return { kind: "manual", reason: "ระบบอ่าน QR ในสลิปไม่ได้ (SLIP_NOT_FOUND)" };
+    return { kind: "manual", reason: `เช็กสลิปอัตโนมัติไม่ได้ (${code}${msg ? `: ${msg}` : ""})` };
   }
   const data = d.data || {};
   const raw = data.rawSlip || {};
@@ -918,12 +920,13 @@ async function handleSlip(req, res, cors) {
   const claimed = money(body.amount);
   if (!(claimed >= SLIP_MIN && claimed <= 100000)) return send(res, 400, { ok: false, error: `ใส่ยอดที่โอน ขั้นต่ำ ${SLIP_MIN} บาท` }, cors);
   const image = typeof body.image === "string" ? body.image : "";
-  if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(image) || image.length > 1800000) {
-    return send(res, 400, { ok: false, error: "ไฟล์สลิปไม่ถูกต้อง ใช้รูป JPG/PNG" }, cors);
+  const imgType = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(image);
+  if (!imgType || image.length > 1800000) {
+    console.error("slip image rejected:", image.slice(0, 30), image.length);
+    return send(res, 400, { ok: false, error: `ไฟล์สลิปไม่ถูกต้อง ใช้รูป JPG/PNG (${!image ? "ไม่มีรูป" : !imgType ? "ชนิดไฟล์" : "ไฟล์ใหญ่เกิน"})` }, cors);
   }
   if (slipLimited(u.id) || slipLimited(clientIp(req))) return send(res, 429, { ok: false, error: "ส่งสลิปบ่อยเกินไป รอ 10 นาทีแล้วลองใหม่" }, cors);
   const v = await verifySlip(image);
-  if (v.kind === "bad") return send(res, 400, { ok: false, error: "อ่านสลิปไม่ได้ ตรวจว่าเป็นสลิปจริงที่เห็น QR ชัด ถ้าโอนจริงแล้วติดต่อแอดมินใน Discord" }, cors);
 
   if (v.kind === "read") {
     if (v.duplicate) return send(res, 409, { ok: false, error: "สลิปนี้ถูกใช้ไปแล้ว" }, cors);
@@ -2305,7 +2308,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "bank-slip-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "bank-slip-2" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
