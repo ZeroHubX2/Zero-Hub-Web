@@ -847,6 +847,7 @@ async function handlePromoRedeem(req, res, cors) {
 const PROMPTPAY_ID = env("PROMPTPAY_ID").replace(/[^0-9]/g, "");
 const PROMPTPAY_NAME = env("PROMPTPAY_NAME");
 const BANK_ACCOUNT = env("BANK_ACCOUNT");
+const SLIP_ENABLED = !!(BANK_ACCOUNT || PROMPTPAY_ID);
 const EASYSLIP_KEY = env("EASYSLIP_KEY");
 const EASYSLIP_URL = env("EASYSLIP_URL", "https://api.easyslip.com/v2").replace(/\/+$/, "");
 const SLIP_MIN = 10;
@@ -856,7 +857,9 @@ const slipLimited = limiter(8, 10 * 60 * 1000);
 const missingTable = (err) => err && (err.code === "42P01" || err.code === "PGRST205" || err.status === 404);
 
 async function handleBankInfo(req, res, cors) {
-  send(res, 200, { ok: true, enabled: !!PROMPTPAY_ID, promptpay: PROMPTPAY_ID, name: PROMPTPAY_NAME, bank: BANK_ACCOUNT, min: SLIP_MIN, auto: !!EASYSLIP_KEY }, cors);
+  // มี BANK_ACCOUNT = โหมดโอนเข้าบัญชีธนาคารอย่างเดียว (ไม่โชว์ QR พร้อมเพย์)
+  const mode = BANK_ACCOUNT ? "bank" : "promptpay";
+  send(res, 200, { ok: true, enabled: SLIP_ENABLED, mode, promptpay: mode === "promptpay" ? PROMPTPAY_ID : "", name: PROMPTPAY_NAME, bank: BANK_ACCOUNT, min: SLIP_MIN, auto: !!EASYSLIP_KEY }, cors);
 }
 
 async function verifySlip(base64) {
@@ -903,7 +906,7 @@ async function verifySlip(base64) {
 }
 
 async function slipCredit(slip, amount, how) {
-  return walletAdd(slip.user_id, amount, "topup", `โอนพร้อมเพย์ ${amount} บาท (${how})`, `slip:${slip.trans_ref || slip.id}`);
+  return walletAdd(slip.user_id, amount, "topup", `โอนธนาคาร ${amount} บาท (${how})`, `slip:${slip.trans_ref || slip.id}`);
 }
 
 function slipWebhook(u, title, color, fields) {
@@ -916,10 +919,10 @@ function slipWebhook(u, title, color, fields) {
 async function handleSlip(req, res, cors) {
   const u = await withUser(req, res, cors);
   if (!u) return;
-  if (!PROMPTPAY_ID) return send(res, 503, { ok: false, error: "ยังไม่เปิดรับโอนพร้อมเพย์ ติดต่อแอดมินใน Discord" }, cors);
+  if (!SLIP_ENABLED) return send(res, 503, { ok: false, error: "ยังไม่เปิดรับโอนเงิน ติดต่อแอดมินใน Discord" }, cors);
   const body = await readJson(req, 2 * 1024 * 1024);
   const claimed = money(body.amount);
-  if (!(claimed >= SLIP_MIN && claimed <= 100000)) return send(res, 400, { ok: false, error: `ใส่ยอดที่โอน ขั้นต่ำ ${SLIP_MIN} บาท` }, cors);
+  if (claimed && !(claimed >= SLIP_MIN && claimed <= 100000)) return send(res, 400, { ok: false, error: `ยอดโอนขั้นต่ำ ${SLIP_MIN} บาท` }, cors);
   const image = typeof body.image === "string" ? body.image : "";
   const imgType = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(image);
   if (!imgType || image.length > 1800000) {
@@ -936,7 +939,7 @@ async function handleSlip(req, res, cors) {
       try {
         used = await db(`bank_slips?select=id,status&trans_ref=eq.${q(v.transRef)}`);
       } catch (err) {
-        if (missingTable(err)) return send(res, 503, { ok: false, error: "ระบบโอนพร้อมเพย์ยังไม่พร้อม ติดต่อแอดมิน" }, cors);
+        if (missingTable(err)) return send(res, 503, { ok: false, error: "ระบบโอนเงินยังไม่พร้อม ติดต่อแอดมิน" }, cors);
         throw err;
       }
       if (used.length) return send(res, 409, { ok: false, error: used[0].status === "pending" ? "สลิปนี้ส่งแล้ว รอแอดมินตรวจ" : "สลิปนี้ถูกใช้ไปแล้ว" }, cors);
@@ -967,11 +970,11 @@ async function handleSlip(req, res, cors) {
       [slip] = await db("bank_slips", { method: "POST", body: { ...row, status: "approved", decided_by: "auto", decided_at: new Date().toISOString() }, prefer: "return=representation" });
     } catch (err) {
       if (err.code === "23505" || err.status === 409) return send(res, 409, { ok: false, error: "สลิปนี้ถูกใช้ไปแล้ว" }, cors);
-      if (missingTable(err)) return send(res, 503, { ok: false, error: "ระบบโอนพร้อมเพย์ยังไม่พร้อม ติดต่อแอดมิน" }, cors);
+      if (missingTable(err)) return send(res, 503, { ok: false, error: "ระบบโอนเงินยังไม่พร้อม ติดต่อแอดมิน" }, cors);
       throw err;
     }
     const w = await slipCredit(slip, v.amount, "อัตโนมัติ");
-    slipWebhook(u, "💸 เติมเงินโอนพร้อมเพย์ (อัตโนมัติ)", 0x3ee08f, [
+    slipWebhook(u, "💸 เติมเงินโอนธนาคาร (อัตโนมัติ)", 0x3ee08f, [
       { name: "ยอด", value: `${v.amount} บาท`, inline: true },
       { name: "ผู้โอน", value: v.sender || "-", inline: true },
       { name: "เลขอ้างอิง", value: v.transRef, inline: true },
@@ -983,7 +986,7 @@ async function handleSlip(req, res, cors) {
     [slip] = await db("bank_slips", { method: "POST", body: { ...row, status: "pending", reason: reasons.join(" · ").slice(0, 300), image }, prefer: "return=representation" });
   } catch (err) {
     if (err.code === "23505" || err.status === 409) return send(res, 409, { ok: false, error: "สลิปนี้ส่งแล้ว" }, cors);
-    if (missingTable(err)) return send(res, 503, { ok: false, error: "ระบบโอนพร้อมเพย์ยังไม่พร้อม ติดต่อแอดมิน" }, cors);
+    if (missingTable(err)) return send(res, 503, { ok: false, error: "ระบบโอนเงินยังไม่พร้อม ติดต่อแอดมิน" }, cors);
     throw err;
   }
   slipWebhook(u, "📥 สลิปรอแอดมินตรวจ", 0xffb020, [
@@ -1302,7 +1305,7 @@ function salesText(r, { daily = true } = {}) {
   const lines = [`📊 **ยอดขาย ${r.label}**  (${r.from === r.to ? r.from : `${r.from} → ${r.to}`})`, `💰 รวม **${baht(r.total)} บาท**`];
   const pp = r.promptpay || { sum: 0, n: 0 };
   lines.push(`• TrueMoney อั่งเปา (เว็บ): ${baht(money(r.truemoney.sum - pp.sum))} บาท (${r.truemoney.n - pp.n} ครั้ง)`);
-  if (pp.n) lines.push(`• โอนพร้อมเพย์ + สลิป (เว็บ): ${baht(pp.sum)} บาท (${pp.n} ครั้ง)`);
+  if (pp.n) lines.push(`• โอนธนาคาร + สลิป (เว็บ): ${baht(pp.sum)} บาท (${pp.n} ครั้ง)`);
   for (const [k, label] of Object.entries(SALE_METHODS)) {
     const m = r.methods[k];
     if (m) lines.push(`• ${label} (ลงบิล): ${baht(m.sum)} บาท (${m.n} บิล)`);
@@ -1393,7 +1396,7 @@ async function handleAdmin(req, res, cors, path, url) {
         })
       );
       for (const x of slips) x.user = users[x.user_id];
-      return send(res, 200, { ok: true, slips, promptpay: !!PROMPTPAY_ID, auto: !!EASYSLIP_KEY }, cors);
+      return send(res, 200, { ok: true, slips, promptpay: SLIP_ENABLED, auto: !!EASYSLIP_KEY }, cors);
     } catch (err) {
       if (missingTable(err)) return send(res, 200, { ok: true, slips: [], missing: true }, cors);
       throw err;
@@ -2309,7 +2312,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "bank-slip-3" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "bank-only-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
