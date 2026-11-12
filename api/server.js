@@ -271,6 +271,28 @@ async function getTiers(all = false) {
   return db(`key_tiers?select=*&order=sort_order.asc${all ? "" : "&is_active=eq.true"}`);
 }
 
+function onSale(t) {
+  return t.sale_price !== null && t.sale_price !== undefined && Number(t.sale_price) < Number(t.price) && (!t.sale_until || new Date(t.sale_until).getTime() > Date.now());
+}
+
+function unitPrice(t) {
+  return onSale(t) ? Number(t.sale_price) : Number(t.price);
+}
+
+function tierPublic(t) {
+  const sale = onSale(t);
+  return {
+    id: t.id,
+    name: t.name,
+    price: unitPrice(t),
+    base_price: Number(t.price),
+    on_sale: sale,
+    sale_until: sale ? t.sale_until || null : null,
+    hours: t.hours,
+    description: t.description || "",
+  };
+}
+
 async function getTier(id) {
   const rows = await db(`key_tiers?select=*&id=eq.${q(id)}&is_active=eq.true`);
   return rows[0] || null;
@@ -517,7 +539,7 @@ async function handleLoader(req, res) {
 
 async function handleTiers(req, res, cors) {
   const tiers = await getTiers();
-  send(res, 200, { ok: true, tiers: tiers.map(({ id, name, price, hours }) => ({ id, name, price, hours })) }, cors);
+  send(res, 200, { ok: true, tiers: tiers.map(tierPublic) }, cors);
 }
 
 async function handleKeyInfo(req, res, cors) {
@@ -821,47 +843,122 @@ async function handlePromoRedeem(req, res, cors) {
   return send(res, 200, { ok: true, kind: "key", random: r.kind === "random", key: keyView(k, tier && tier.name) }, cors);
 }
 
+const DISCOUNT_TEXT = {
+  code_invalid: "ไม่พบโค้ดส่วนลดนี้",
+  code_inactive: "โค้ดส่วนลดนี้ถูกปิดแล้ว",
+  code_expired: "โค้ดส่วนลดนี้หมดอายุแล้ว",
+  code_used_up: "โค้ดส่วนลดนี้ถูกใช้ครบแล้ว",
+  code_tier: "โค้ดนี้ใช้กับแพ็กเกจนี้ไม่ได้",
+  code_already: "บัญชีนี้ใช้โค้ดนี้ครบแล้ว",
+  code_min: "ยอดซื้อยังไม่ถึงขั้นต่ำของโค้ดนี้",
+};
+
+const buyQty = (v) => Math.min(20, Math.max(1, Math.floor(Number(v) || 1)));
+
+// คำนวณราคา + เช็กโค้ดส่วนลด (ใช้ตอนกด "ใช้โค้ด" ก่อนซื้อ ตัวจริงเช็กซ้ำใน shop_buy2)
+async function quote(u, tier, qty, code) {
+  const unit = unitPrice(tier);
+  const subtotal = unit * qty;
+  const out = { unit_price: unit, base_price: Number(tier.price), qty, subtotal, discount: 0, total: subtotal, code: "" };
+  if (!code) return out;
+  if (!validCode(code)) return { ...out, status: "code_invalid" };
+  let c;
+  try {
+    [c] = await db(`discount_codes?select=*&code=eq.${q(code)}`);
+  } catch {
+    c = null;
+  }
+  if (!c) return { ...out, status: "code_invalid" };
+  if (!c.active) return { ...out, status: "code_inactive" };
+  if (c.expires_at && new Date(c.expires_at).getTime() <= Date.now()) return { ...out, status: "code_expired" };
+  if (c.used >= c.max_uses) return { ...out, status: "code_used_up" };
+  if (c.tier && c.tier !== tier.id) return { ...out, status: "code_tier" };
+  if (subtotal < (c.min_total || 0)) return { ...out, status: "code_min", min_total: c.min_total };
+  const mine = await db(`discount_uses?select=id&code=eq.${q(code)}&user_id=eq.${q(u.id)}`);
+  if (mine.length >= c.per_user) return { ...out, status: "code_already" };
+  const discount = c.percent !== null ? Math.floor((subtotal * Number(c.percent)) / 100) : Math.min(Number(c.amount), subtotal);
+  return { ...out, discount, total: subtotal - discount, code, percent: c.percent !== null ? Number(c.percent) : null, amount: c.amount };
+}
+
+function discountError(res, cors, status, extra = {}) {
+  const msg = status === "code_min" && extra.min_total ? `ยอดซื้อขั้นต่ำของโค้ดนี้ ${extra.min_total} บาท` : DISCOUNT_TEXT[status] || "ใช้โค้ดนี้ไม่ได้";
+  return send(res, 400, { ok: false, status, error: msg, ...extra }, cors);
+}
+
+async function handleQuote(req, res, cors) {
+  const u = await withUser(req, res, cors);
+  if (!u) return;
+  if (webKeyLimited(clientIp(req))) return send(res, 429, { ok: false, error: "ลองบ่อยเกินไป รอสักครู่" }, cors);
+  const body = await readJson(req);
+  const tier = await getTier(clean(body.tier, 20));
+  if (!tier) return send(res, 400, { ok: false, error: "แพ็กเกจนี้ปิดขายอยู่" }, cors);
+  const r = await quote(u, tier, buyQty(body.qty), normCode(body.code));
+  if (r.status) return discountError(res, cors, r.status, { min_total: r.min_total });
+  send(res, 200, { ok: true, ...r }, cors);
+}
+
 async function handleBuy(req, res, cors) {
   const u = await withUser(req, res, cors);
   if (!u) return;
   const body = await readJson(req);
   const tierId = clean(body.tier, 20);
+  const qty = buyQty(body.qty);
+  const code = normCode(body.code);
+  if (code && !validCode(code)) return discountError(res, cors, "code_invalid");
   let r;
+  let legacy = false;
   for (let i = 0; i < 3; i++) {
     try {
-      [r] = await db("rpc/shop_buy", { method: "POST", body: { p_user: u.id, p_tier: tierId, p_key: newKey() } });
+      const keys = Array.from({ length: qty }, () => newKey());
+      try {
+        [r] = await db("rpc/shop_buy2", { method: "POST", body: { p_user: u.id, p_tier: tierId, p_keys: keys, p_code: code } });
+      } catch (err) {
+        // ยังไม่ได้รัน 017_sale_discount.sql → ใช้ตัวเก่า (ซื้อทีละ 1 ไม่มีโค้ด)
+        if (!(err.code === "PGRST202" || err.status === 404) || qty > 1 || code) {
+          if (err.code === "PGRST202" || err.status === 404) return send(res, 400, { ok: false, error: "ระบบโค้ดส่วนลด/ซื้อหลายชิ้นยังไม่เปิด ติดต่อแอดมิน" }, cors);
+          throw err;
+        }
+        legacy = true;
+        const [o] = await db("rpc/shop_buy", { method: "POST", body: { p_user: u.id, p_tier: tierId, p_key: keys[0] } });
+        r = o && { status: o.status, balance: o.balance, key_ids: o.key_id ? [o.key_id] : null, discount: 0 };
+      }
       break;
     } catch (err) {
       if (err.code !== "23505" || i === 2) throw err;
     }
   }
   if (!r || r.status === "tier") return send(res, 400, { ok: false, error: "แพ็กเกจนี้ปิดขายอยู่" }, cors);
+  if (r.status === "qty") return send(res, 400, { ok: false, error: "จำนวนไม่ถูกต้อง (1-20 ชิ้น)" }, cors);
+  if (r.status && r.status.startsWith("code_")) return discountError(res, cors, r.status, { min_total: r.discount || undefined });
   if (r.status === "funds") {
-    return send(res, 400, { ok: false, status: "funds", error: "พอยต์ไม่พอ เติมเงินก่อนแล้วลองใหม่", balance: Number(r.balance) }, cors);
+    return send(res, 400, { ok: false, status: "funds", error: "พอยต์ไม่พอ เติมเงินก่อนแล้วลองใหม่", balance: Number(r.balance), total: r.total }, cors);
   }
-  let [k] = await db(`keys?select=*&id=eq.${r.key_id}`);
+  const ids = (r.key_ids || []).map(Number);
+  let ks = await db(`keys?select=*&id=in.(${ids.join(",")})&order=id.asc`);
   const discordId = discordIdOf(u);
   if (discordId) {
-    k = (await updateKey(k.key, { discord_id: discordId }).catch(() => null)) || k;
+    ks = await Promise.all(ks.map((k) => updateKey(k.key, { discord_id: discordId }).catch(() => k).then((x) => x || k)));
     grantBuyerRole(discordId).catch(() => {});
   }
-  const tier = await getTier(tierId);
+  const tier = (await getTiers(true)).find((t) => t.id === tierId);
+  const total = legacy ? (tier ? tier.price : 0) : Number(r.total);
   postWebhook(SALES_WEBHOOK_URL, {
     username: "ZeroHub Shop",
     embeds: [
       {
-        title: "ขายคีย์ใหม่",
+        title: ks.length > 1 ? `ขายคีย์ใหม่ x${ks.length}` : "ขายคีย์ใหม่",
         color: 0x3ee08f,
         fields: [
           { name: "ผู้ใช้", value: `${userName(u)} (${u.email})` },
-          { name: "แพ็กเกจ", value: `${tier ? tier.name : tierId} (${tier ? tier.price : "?"} พอยต์)`, inline: true },
-          { name: "คีย์", value: `||${k.key}||`, inline: true },
+          { name: "แพ็กเกจ", value: `${tier ? tier.name : tierId} x${ks.length} = ${total} พอยต์${Number(r.discount) > 0 ? ` (โค้ด ${code} -${r.discount})` : ""}`, inline: true },
+          { name: "คีย์", value: ks.map((k) => `||${k.key}||`).join("\n").slice(0, 1000), inline: true },
         ],
         timestamp: new Date().toISOString(),
       },
     ],
   });
-  send(res, 200, { ok: true, key: keyView(k, tier && tier.name), balance: Number(r.balance) }, cors);
+  const views = ks.map((k) => keyView(k, tier && tier.name));
+  send(res, 200, { ok: true, key: views[0], keys: views, balance: Number(r.balance), total, discount: Number(r.discount) || 0 }, cors);
 }
 
 async function handleClaim(req, res, cors) {
@@ -1112,6 +1209,14 @@ async function handleAdmin(req, res, cors, path, url) {
     for (const pr of promos) pr.prizes = prizes.filter((z) => z.code === pr.code);
     return send(res, 200, { ok: true, promos }, cors);
   }
+  if (req.method === "GET" && path === "/api/admin/discounts") {
+    try {
+      return send(res, 200, { ok: true, discounts: await db("discount_codes?select=*&order=created_at.desc&limit=300") }, cors);
+    } catch (err) {
+      if (err.code === "42P01" || err.code === "PGRST205" || err.status === 404) return send(res, 200, { ok: true, discounts: [], missing: true }, cors);
+      throw err;
+    }
+  }
   if (req.method === "GET" && path === "/api/admin/tiers") {
     return send(res, 200, { ok: true, tiers: await getTiers(true) }, cors);
   }
@@ -1222,6 +1327,18 @@ async function handleAdmin(req, res, cors, path, url) {
     if (body.price !== undefined) patch.price = Math.max(0, Math.round(Number(body.price) || 0));
     if (body.is_active !== undefined) patch.is_active = !!body.is_active;
     if (body.name !== undefined) patch.name = clean(body.name, 40);
+    if (body.description !== undefined) patch.description = typeof body.description === "string" ? body.description.slice(0, 4000) : "";
+    if (body.sale_price !== undefined) {
+      const sp = body.sale_price === null || body.sale_price === "" ? null : Math.max(0, Math.round(Number(body.sale_price)));
+      patch.sale_price = sp === null || isNaN(sp) ? null : sp;
+    }
+    if (body.sale_until !== undefined) {
+      const until = body.sale_until ? new Date(body.sale_until) : null;
+      if (until && isNaN(until)) return send(res, 400, { ok: false, error: "เวลาสิ้นสุดไม่ถูกต้อง" }, cors);
+      if (until && until.getTime() <= Date.now() && patch.sale_price !== null) return send(res, 400, { ok: false, error: "เวลาสิ้นสุดลดราคาต้องอยู่ในอนาคต" }, cors);
+      patch.sale_until = until ? until.toISOString() : null;
+    }
+    if (patch.sale_price === null) patch.sale_until = null;
     const rows = await db(`key_tiers?id=eq.${q(id)}`, { method: "PATCH", body: patch, prefer: "return=representation" });
     return send(res, rows.length ? 200 : 404, { ok: !!rows.length, tier: rows[0] }, cors);
   }
@@ -1272,6 +1389,52 @@ async function handleAdmin(req, res, cors, path, url) {
       if (err.code === "23505" || err.status === 409) return send(res, 409, { ok: false, error: "โค้ดนี้มีอยู่แล้ว" }, cors);
       throw err;
     }
+  }
+  if (path === "/api/admin/discounts") {
+    let code = normCode(body.code);
+    if (!code) code = "SALE" + crypto.randomBytes(3).toString("hex").toUpperCase();
+    if (!validCode(code)) return send(res, 400, { ok: false, error: "โค้ดใช้ได้เฉพาะ A-Z 0-9 - _ ยาว 3-32 ตัว" }, cors);
+    const row = {
+      code,
+      max_uses: Math.min(1000000, Math.max(1, Math.floor(Number(body.max_uses) || 1))),
+      per_user: Math.min(1000, Math.max(1, Math.floor(Number(body.per_user) || 1))),
+      min_total: Math.max(0, Math.floor(Number(body.min_total) || 0)),
+      note: clean(body.note, 200),
+    };
+    const val = Number(body.value);
+    if (body.type === "amount") {
+      if (!(val >= 1 && val <= 100000)) return send(res, 400, { ok: false, error: "จำนวนบาทที่ลดไม่ถูกต้อง" }, cors);
+      row.amount = Math.round(val);
+    } else {
+      if (!(val > 0 && val <= 100)) return send(res, 400, { ok: false, error: "เปอร์เซ็นต์ต้องอยู่ระหว่าง 1-100" }, cors);
+      row.percent = Math.round(val * 100) / 100;
+    }
+    if (body.tier) {
+      const tier = (await getTiers(true)).find((t) => t.id === clean(body.tier, 20));
+      if (!tier) return send(res, 400, { ok: false, error: "ไม่พบแพ็กเกจ" }, cors);
+      row.tier = tier.id;
+    }
+    const until = body.expires_at ? new Date(body.expires_at) : null;
+    if (until && !isNaN(until)) {
+      if (until.getTime() <= Date.now()) return send(res, 400, { ok: false, error: "เวลาหมดอายุต้องอยู่ในอนาคต" }, cors);
+      row.expires_at = until.toISOString();
+    }
+    try {
+      const [made] = await db("discount_codes", { method: "POST", body: row, prefer: "return=representation" });
+      return send(res, 200, { ok: true, discount: made }, cors);
+    } catch (err) {
+      if (err.code === "23505" || err.status === 409) return send(res, 409, { ok: false, error: "โค้ดนี้มีอยู่แล้ว" }, cors);
+      if (err.code === "42P01" || err.code === "PGRST205" || err.status === 404) return send(res, 400, { ok: false, error: "ยังไม่ได้รัน 017_sale_discount.sql ใน Supabase" }, cors);
+      throw err;
+    }
+  }
+  if (path === "/api/admin/discounts/toggle") {
+    const rows = await db(`discount_codes?code=eq.${q(normCode(body.code))}`, { method: "PATCH", body: { active: !!body.active }, prefer: "return=representation" });
+    return send(res, rows.length ? 200 : 404, { ok: !!rows.length, discount: rows[0] }, cors);
+  }
+  if (path === "/api/admin/discounts/delete") {
+    await db(`discount_codes?code=eq.${q(normCode(body.code))}`, { method: "DELETE" });
+    return send(res, 200, { ok: true }, cors);
   }
   if (path === "/api/admin/promos/toggle") {
     const rows = await db(`promo_codes?code=eq.${q(normCode(body.code))}`, { method: "PATCH", body: { active: !!body.active }, prefer: "return=representation" });
@@ -1655,7 +1818,9 @@ const row = (...components) => ({ type: 1, components });
 
 async function priceLines(L) {
   try {
-    return (await getTiers()).map((t) => `${TIER_ICONS[t.id] || "🔑"} **${tierName(t, L)}** — \`${t.price} ${T(L, "บาท", "THB")}\``).join("\n");
+    return (await getTiers())
+      .map((t) => `${TIER_ICONS[t.id] || "🔑"} **${tierName(t, L)}** — ${onSale(t) ? `~~${t.price}~~ ` : ""}\`${unitPrice(t)} ${T(L, "บาท", "THB")}\`${onSale(t) ? " 🔥" : ""}`)
+      .join("\n");
   } catch {
     return T(L, `ดูราคาได้ที่ ${SHOP_URL}`, `See prices at ${SHOP_URL}`);
   }
@@ -1667,9 +1832,9 @@ async function panelMessage() {
     tiers = await Promise.race([getTiers(), new Promise((r) => setTimeout(() => r([]), 1200))]);
   } catch {}
   const priceText = tiers.length
-    ? tiers.map((t) => `${TIER_ICONS[t.id] || "🔑"} ${t.name} **\`${t.price}฿\`**`).join("  ·  ")
+    ? tiers.map((t) => `${TIER_ICONS[t.id] || "🔑"} ${t.name} ${onSale(t) ? `~~${t.price}~~ ` : ""}**\`${unitPrice(t)}฿\`**`).join("  ·  ")
     : `ดูราคาได้ที่ ${SHOP_URL}`;
-  const priceTextEn = tiers.length ? tiers.map((t) => `${TIER_EN[t.id] || t.name} ${t.price}฿`).join(" · ") : "";
+  const priceTextEn = tiers.length ? tiers.map((t) => `${TIER_EN[t.id] || t.name} ${unitPrice(t)}฿`).join(" · ") : "";
   return {
     flags: 1 << 15,
     components: [
@@ -1939,7 +2104,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "buyer-sync-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "sale-discount-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
@@ -1955,6 +2120,7 @@ async function route(req, res) {
   if (m === "POST" && path === "/api/me/resethwid") return handleUserReset(req, res, cors);
   if (m === "POST" && path === "/api/wallet/topup") return handleTopup(req, res, cors);
   if (m === "POST" && path === "/api/shop/buy") return handleBuy(req, res, cors);
+  if (m === "POST" && path === "/api/shop/quote") return handleQuote(req, res, cors);
   if (m === "POST" && path === "/api/promo/redeem") return handlePromoRedeem(req, res, cors);
   if (m === "POST" && path === "/api/discord/interactions") return handleInteraction(req, res);
   if (path.startsWith("/api/admin/")) return handleAdmin(req, res, cors, path, url);
