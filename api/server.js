@@ -45,6 +45,7 @@ const DISCORD_APP_ID = env("DISCORD_APP_ID");
 const DISCORD_BOT_TOKEN = env("DISCORD_BOT_TOKEN");
 const DISCORD_GUILD_ID = env("DISCORD_GUILD_ID");
 const DISCORD_BUYER_ROLE_ID = env("DISCORD_BUYER_ROLE_ID");
+const DISCORD_FREE_ROLE_ID = env("DISCORD_FREE_ROLE_ID");
 const DISCORD_ADMIN_ROLE_IDS = env("DISCORD_ADMIN_ROLE_IDS").split(",").map((s) => s.trim()).filter(Boolean);
 const DISCORD_ADMIN_IDS = env("DISCORD_ADMIN_IDS").split(",").map((s) => s.trim()).filter(Boolean);
 
@@ -211,13 +212,13 @@ function signSession(keyId, hwid) {
   return crypto.createHmac("sha256", SESSION_SECRET).update(`${keyId}.${hwid}`).digest("base64url");
 }
 
-function newKey() {
+function newKey(prefix = "ZH") {
   let s = "";
   for (let i = 0; i < 16; i++) {
     if (i && i % 4 === 0) s += "-";
     s += KEY_ALPHABET[crypto.randomInt(KEY_ALPHABET.length)];
   }
-  return `ZH-${s}`;
+  return `${prefix}-${s}`;
 }
 
 class DbError extends Error {}
@@ -636,31 +637,53 @@ async function getLootLinks() {
   return lootLinksPending;
 }
 
-async function activeFreeKey(tag) {
+async function activeFreeKey(tag, did) {
+  const who = did ? `or=(note.eq.${q(`ip:${tag}`)},discord_id.eq.${q(did)})` : `note=eq.${q(`ip:${tag}`)}`;
   const rows = await db(
-    `keys?select=key,expires_at&source=eq.free&note=eq.${q(`ip:${tag}`)}&revoked=is.false&expires_at=gt.${q(new Date().toISOString())}&order=expires_at.desc&limit=1`
+    `keys?select=key,expires_at,discord_id&source=eq.free&${who}&revoked=is.false&expires_at=gt.${q(new Date().toISOString())}&order=expires_at.desc&limit=1`
   );
   return rows[0] || null;
 }
 
-async function issueFreeKey(tag) {
-  const old = await activeFreeKey(tag);
-  if (old) return old;
+async function freeUser(req) {
+  try {
+    const u = await authUser(req);
+    return u ? { uid: u.id, did: discordIdOf(u) } : {};
+  } catch {
+    return {};
+  }
+}
+
+async function linkFreeKey(k, who) {
+  if (!who.did) return;
+  if (!k.discord_id) await updateKey(k.key, { discord_id: who.did, user_id: who.uid || null }).catch(() => {});
+  grantFreeRole(who.did).catch(() => {});
+}
+
+async function issueFreeKey(tag, who = {}) {
+  const old = await activeFreeKey(tag, who.did);
+  if (old) {
+    await linkFreeKey(old, who);
+    return old;
+  }
   const now = new Date();
   // Clock starts now (not at first use), so free keys cannot be stockpiled.
   const [k] = await db("keys", {
     method: "POST",
     prefer: "return=representation",
     body: {
-      key: newKey(),
+      key: newKey("ZHFREE"),
       tier: FREE_TIER,
       hours: FREE_HOURS,
       activated_at: now.toISOString(),
       expires_at: new Date(now.getTime() + FREE_HOURS * 3600 * 1000).toISOString(),
       source: "free",
       note: `ip:${tag}`,
+      discord_id: who.did || null,
+      user_id: who.uid || null,
     },
   });
+  if (who.did) grantFreeRole(who.did).catch(() => {});
   return { key: k.key, expires_at: k.expires_at };
 }
 
@@ -673,8 +696,12 @@ async function handleFreeStart(req, res, cors) {
   if (freeStartLimited(clientIp(req))) return send(res, 429, { ok: false, error: "ลองบ่อยเกินไป รอสักครู่" }, cors);
   const body = await readJson(req);
   const tag = freeIpTag(req);
-  const have = await activeFreeKey(tag);
-  if (have) return send(res, 200, { ok: true, done: true, key: have.key, expires_at: have.expires_at, hours: FREE_HOURS }, cors);
+  const who = await freeUser(req);
+  const have = await activeFreeKey(tag, who.did);
+  if (have) {
+    await linkFreeKey(have, who);
+    return send(res, 200, { ok: true, done: true, key: have.key, expires_at: have.expires_at, hours: FREE_HOURS, linked: !!who.did }, cors);
+  }
   const sid = clean(body.sid, 64);
   const old = sid && freeSessions.get(sid);
   if (old && Date.now() - old.created < FREE_SESSION_MS) {
@@ -726,8 +753,9 @@ async function handleFreeVerify(req, res, cors) {
   s.step += 1;
   if (s.step < FREE_STEPS) return send(res, 200, { ok: true, step: s.step, steps: FREE_STEPS }, cors);
   freeSessions.delete(sid);
-  const k = await issueFreeKey(s.tag);
-  send(res, 200, { ok: true, done: true, key: k.key, expires_at: k.expires_at, hours: FREE_HOURS }, cors);
+  const who = await freeUser(req);
+  const k = await issueFreeKey(s.tag, who);
+  send(res, 200, { ok: true, done: true, key: k.key, expires_at: k.expires_at, hours: FREE_HOURS, linked: !!who.did }, cors);
 }
 
 // Expired free keys pile up fast; drop the ones that ended over two days ago.
@@ -1914,13 +1942,40 @@ async function removeBuyerRole(id) {
   if (!(await hasBuyerRole(id))) return false;
   await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${id}/roles/${DISCORD_BUYER_ROLE_ID}`, "DELETE");
   postWebhook(SALES_WEBHOOK_URL, { username: "ZeroHub Shop", content: `🔻 ถอดยศ Buyer จาก <@${id}> แล้ว (ไม่มีคีย์ที่ใช้งานได้เหลือ)` });
+  if (DISCORD_FREE_ROLE_ID) {
+    db(`keys?select=id&discord_id=eq.${q(id)}&source=eq.free&limit=1`)
+      .then((rows) => rows.length && setFreeRole(id, true))
+      .catch((err) => console.error("restore free role failed:", err.message));
+  }
   return true;
+}
+
+// Free-key role: kept until the member buys; Buyer replaces it.
+async function setFreeRole(userId, on) {
+  if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID || !DISCORD_FREE_ROLE_ID || !/^\d{15,25}$/.test(String(userId || ""))) return false;
+  try {
+    await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${userId}/roles/${DISCORD_FREE_ROLE_ID}`, on ? "PUT" : "DELETE");
+    return true;
+  } catch (err) {
+    if (!/discord 404/.test(err.message)) console.error("free role failed:", err.message);
+    return false;
+  }
+}
+
+async function grantFreeRole(userId) {
+  if (!DISCORD_FREE_ROLE_ID) return false;
+  const roles = await memberRoles(userId).catch(() => null);
+  if (!roles) return false;
+  if (DISCORD_BUYER_ROLE_ID && roles.includes(DISCORD_BUYER_ROLE_ID)) return true;
+  if (roles.includes(DISCORD_FREE_ROLE_ID)) return true;
+  return setFreeRole(userId, true);
 }
 
 async function grantBuyerRole(userId) {
   if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID || !DISCORD_BUYER_ROLE_ID) return false;
   try {
     await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${userId}/roles/${DISCORD_BUYER_ROLE_ID}`, "PUT");
+    if (DISCORD_FREE_ROLE_ID) setFreeRole(userId, false);
     return true;
   } catch (err) {
     console.error("grant role failed:", err.message);
@@ -1931,7 +1986,7 @@ async function grantBuyerRole(userId) {
 async function syncBuyerRole(discordId) {
   const id = String(discordId || "");
   if (!/^\d{15,25}$/.test(id) || !DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID || !DISCORD_BUYER_ROLE_ID) return null;
-  const rows = await db(`keys?select=revoked,expires_at&discord_id=eq.${q(id)}`);
+  const rows = await db(`keys?select=revoked,expires_at&discord_id=eq.${q(id)}&source=neq.free`);
   const now = Date.now();
   const hasValid = rows.some((k) => !k.revoked && (!k.expires_at || new Date(k.expires_at).getTime() > now));
   if (hasValid) return (await grantBuyerRole(id)) ? "kept" : null;
@@ -1947,7 +2002,7 @@ async function sweepBuyerRoles() {
   if (!DISCORD_BOT_TOKEN || !DISCORD_GUILD_ID || !DISCORD_BUYER_ROLE_ID || !SUPABASE_URL) return;
   let rows;
   try {
-    rows = await db("keys?select=discord_id,revoked,expires_at&discord_id=not.is.null&limit=10000");
+    rows = await db("keys?select=discord_id,revoked,expires_at&discord_id=not.is.null&source=neq.free&limit=10000");
   } catch (err) {
     return console.error("buyer sweep: read keys failed:", err.message);
   }
@@ -1966,6 +2021,7 @@ async function sweepBuyerRoles() {
         const roles = await memberRoles(id);
         if (roles && !roles.includes(DISCORD_BUYER_ROLE_ID)) {
           await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${id}/roles/${DISCORD_BUYER_ROLE_ID}`, "PUT");
+          if (DISCORD_FREE_ROLE_ID && roles.includes(DISCORD_FREE_ROLE_ID)) await setFreeRole(id, false);
           console.log("buyer sweep: granted role to", id);
           postWebhook(SALES_WEBHOOK_URL, { username: "ZeroHub Shop", content: `🔺 ให้ยศ Buyer กับ <@${id}> แล้ว (มีคีย์ที่ใช้งานได้แต่ยศตกหล่น)` });
         }
@@ -2088,6 +2144,16 @@ async function runCommand(name, opts, member, user, L = "th") {
     if (!k || k.revoked) return { content: statusText(L, k ? "revoked" : "invalid") };
     if (k.discord_id && k.discord_id !== uid) return { content: T(L, "คีย์นี้ผูกกับบัญชี Discord อื่นแล้ว", "This key is already linked to another Discord account") };
     if (!k.discord_id) await updateKey(k.key, { discord_id: uid });
+    if (k.source === "free") {
+      const got = await grantFreeRole(uid);
+      return {
+        content: T(
+          L,
+          `ผูกคีย์ฟรีกับบัญชีของคุณแล้ว (${formatLeft(k)})${got ? "\nได้รับยศคนใช้ฟรีแล้ว" : ""}\nอยากได้คีย์ไม่มีโฆษณา ใช้นานกว่า ซื้อได้ที่ ${SHOP_URL}`,
+          `Free key linked to your account (${formatLeft(k, L)})${got ? "\nYou got the free user role" : ""}\nWant no ads and longer keys? Buy one at ${SHOP_URL}`
+        ),
+      };
+    }
     const ok = await grantBuyerRole(uid);
     return {
       content: T(
@@ -2490,7 +2556,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freekey-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freekey-2" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
