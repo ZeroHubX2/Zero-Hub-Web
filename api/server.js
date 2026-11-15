@@ -1771,6 +1771,7 @@ async function handleAdmin(req, res, cors, path, url) {
     }
     if (patch.sale_price === null) patch.sale_until = null;
     const rows = await db(`key_tiers?id=eq.${q(id)}`, { method: "PATCH", body: patch, prefer: "return=representation" });
+    if (rows.length) refreshPanels(true).catch((err) => console.error("panel refresh:", err.message));
     return send(res, rows.length ? 200 : 404, { ok: !!rows.length, tier: rows[0] }, cors);
   }
   if (path === "/api/admin/promos") {
@@ -2312,11 +2313,13 @@ async function priceLines(L) {
   }
 }
 
-async function panelMessage() {
-  let tiers = [];
-  try {
-    tiers = await Promise.race([getTiers(), new Promise((r) => setTimeout(() => r([]), 1200))]);
-  } catch {}
+async function panelMessage(given) {
+  let tiers = given || [];
+  if (!given) {
+    try {
+      tiers = await Promise.race([getTiers(), new Promise((r) => setTimeout(() => r([]), 1200))]);
+    } catch {}
+  }
   const priceText = tiers.length
     ? tiers.map((t) => `${TIER_ICONS[t.id] || "🔑"} ${t.name} ${onSale(t) ? `~~${t.price}~~ ` : ""}**\`${unitPrice(t)}฿\`**`).join("  ·  ")
     : `ดูราคาได้ที่ ${SHOP_URL}`;
@@ -2388,13 +2391,60 @@ async function handlePanelCommand(res, body) {
   if (!discordIsAdmin(body.member)) return send(res, 200, { type: 4, data: { flags: 64, content: "คำสั่งนี้สำหรับแอดมินเท่านั้น" } });
   const msg = await panelMessage();
   try {
-    await Promise.race([discordApi(`/channels/${body.channel_id}/messages`, "POST", msg), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2000))]);
-    return send(res, 200, { type: 4, data: { flags: 64, content: "โพสต์แผงคีย์ในห้องนี้แล้ว ✅" } });
+    const posted = await Promise.race([discordApi(`/channels/${body.channel_id}/messages`, "POST", msg), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2000))]);
+    if (posted && posted.id) rememberPanel(posted.channel_id || body.channel_id, posted.id).catch((err) => console.error("remember panel:", err.message));
+    return send(res, 200, { type: 4, data: { flags: 64, content: "โพสต์แผงคีย์ในห้องนี้แล้ว ✅ (ราคาบนแผงจะอัปเดตเองเมื่อแก้ราคา)" } });
   } catch (err) {
     console.error("panel post failed:", err.message);
     if (/discord 403/.test(err.message)) return send(res, 200, { type: 4, data: { flags: 64, content: "โพสต์ไม่สำเร็จ ให้บอทมีสิทธิ์ ดูช่อง / ส่งข้อความ / ฝังลิงก์ ในห้องนี้ แล้วลองใหม่" } });
     return send(res, 200, { type: 4, data: msg });
   }
+}
+
+// Posted panels are remembered so price changes (edits, sales starting or ending) update them in place.
+let panelSig = null;
+async function getPanels() {
+  const [meta] = await db("shop_meta?select=v&k=eq.panels");
+  try {
+    const list = JSON.parse(meta ? meta.v : "[]");
+    return Array.isArray(list) ? list.filter((x) => x && /^\d+$/.test(x.c) && /^\d+$/.test(x.m)) : [];
+  } catch {
+    return [];
+  }
+}
+async function savePanels(list) {
+  await db("shop_meta", { method: "POST", body: { k: "panels", v: JSON.stringify(list.slice(-10)) }, prefer: "resolution=merge-duplicates" });
+}
+async function rememberPanel(c, m) {
+  const list = (await getPanels()).filter((x) => x.m !== String(m));
+  list.push({ c: String(c), m: String(m) });
+  await savePanels(list);
+  panelSig = null;
+}
+async function refreshPanels(force) {
+  if (!DISCORD_BOT_TOKEN || !SUPABASE_URL) return;
+  const tiers = await getTiers();
+  const sig = JSON.stringify(tiers.map((t) => [t.id, t.name, t.price, unitPrice(t), onSale(t)]));
+  if (!force && sig === panelSig) return;
+  const list = await getPanels();
+  if (!list.length) {
+    panelSig = sig;
+    return;
+  }
+  const msg = await panelMessage(tiers);
+  const keep = [];
+  for (const p of list) {
+    try {
+      await discordApi(`/channels/${p.c}/messages/${p.m}`, "PATCH", { components: msg.components, flags: msg.flags });
+      keep.push(p);
+    } catch (err) {
+      if (/discord 404/.test(err.message)) continue; // panel was deleted
+      keep.push(p);
+      console.error("panel refresh failed:", p.m, err.message);
+    }
+  }
+  if (keep.length !== list.length) await savePanels(keep);
+  panelSig = sig;
 }
 
 async function handlePanelButton(res, body) {
@@ -2594,7 +2644,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freekey-5" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "panel-auto-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
@@ -2639,4 +2689,5 @@ http
     setTimeout(() => sweepBuyerRoles().catch(() => {}), 2 * 60 * 1000).unref();
     setInterval(() => sweepBuyerRoles().catch(() => {}), 15 * 60 * 1000).unref();
     setInterval(() => dailySummaryTick().catch((err) => console.error("daily summary:", err.message)), 5 * 60 * 1000).unref();
+    setInterval(() => refreshPanels().catch((err) => console.error("panel refresh:", err.message)), 2 * 60 * 1000).unref();
   });
