@@ -606,6 +606,34 @@ async function lootlabs(path, body) {
   return d.message;
 }
 
+// The docs show one object, but the live API may wrap it in an array or nest it.
+function lootUrlOf(m) {
+  if (typeof m === "string") {
+    try {
+      m = JSON.parse(m);
+    } catch {
+      return /^https:\/\//.test(m) ? m : null;
+    }
+  }
+  if (Array.isArray(m)) {
+    for (const x of m) {
+      const u = lootUrlOf(x);
+      if (u) return u;
+    }
+    return null;
+  }
+  if (!m || typeof m !== "object") return null;
+  if (typeof m.loot_url === "string" && /^https:\/\//.test(m.loot_url)) return m.loot_url;
+  if (typeof m.short === "string" && m.short) return `https://loot-link.com/s?${m.short}`;
+  for (const k of ["message", "data", "link", "result"]) {
+    if (m[k] && typeof m[k] === "object") {
+      const u = lootUrlOf(m[k]);
+      if (u) return u;
+    }
+  }
+  return null;
+}
+
 async function getLootLinks() {
   if (lootLinks.length >= FREE_STEPS) return lootLinks;
   if (!lootLinksPending) {
@@ -624,8 +652,9 @@ async function getLootLinks() {
           number_of_tasks: Number(env("LOOTLABS_TASKS", "1")) || 1,
           theme: Number(env("LOOTLABS_THEME", "1")) || 1,
         });
-        if (!m || typeof m.loot_url !== "string") throw new Error("lootlabs content_locker: no loot_url");
-        links.push(m.loot_url);
+        const url = lootUrlOf(m);
+        if (!url) throw new Error(`lootlabs content_locker: no loot_url in ${JSON.stringify(m).slice(0, 300)}`);
+        links.push(url);
         await db("shop_meta", { method: "POST", body: { k: "lootlabs_links", v: JSON.stringify(links) }, prefer: "resolution=merge-duplicates" });
       }
       lootLinks = links;
@@ -724,7 +753,11 @@ async function handleFreeLink(req, res, cors) {
   let links, enc;
   try {
     links = await getLootLinks();
-    enc = String(await lootlabs("url_encryptor", { destination_url: dest }));
+    let m = await lootlabs("url_encryptor", { destination_url: dest });
+    if (Array.isArray(m)) m = m[0];
+    if (m && typeof m === "object") m = m.data || m.encrypted || m.message || m.url || "";
+    enc = typeof m === "string" ? m.trim() : "";
+    if (!enc) throw new Error("lootlabs url_encryptor: empty");
   } catch (err) {
     console.error("free link:", err.message);
     return send(res, 502, { ok: false, error: "ระบบลิงก์ Lootlabs มีปัญหาชั่วคราว ลองใหม่อีกครั้ง" }, cors);
@@ -2556,7 +2589,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freekey-2" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freekey-3" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
