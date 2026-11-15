@@ -563,6 +563,180 @@ async function handleKeyReset(req, res, cors) {
   send(res, 200, { ok: true, next_reset_at: r.next_reset_at }, cors);
 }
 
+// ---- Free keys: Lootlabs checkpoints on the shop's /getkey page ----
+// Each checkpoint gets a one-time nonce in its return URL. The URL is encrypted with the
+// Lootlabs Redirect API (anti-bypass), so the visitor only learns it by finishing the link.
+const LOOTLABS_TOKEN = env("LOOTLABS_TOKEN");
+const LOOTLABS_API = env("LOOTLABS_API", "https://creators.lootlabs.gg/api/public").replace(/\/+$/, "");
+const FREE_STEPS = Math.max(1, Math.min(5, Number(env("FREE_STEPS", "2")) || 2));
+const FREE_HOURS = Math.max(1, Number(env("FREE_HOURS", "6")) || 6);
+const FREE_MIN_SECONDS = Math.max(0, Number(env("FREE_MIN_SECONDS", "15")));
+const FREE_TIER = env("FREE_TIER", "free");
+const FREE_SESSION_MS = 30 * 60 * 1000;
+const freeSessions = new Map();
+const freeStartLimited = limiter(20, 10 * 60 * 1000);
+const freeStepLimited = limiter(40, 10 * 60 * 1000);
+let lootLinks = env("LOOTLABS_LINKS").split(",").map((s) => s.trim()).filter(Boolean);
+let lootLinksPending = null;
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [sid, s] of freeSessions) if (now - s.created > FREE_SESSION_MS) freeSessions.delete(sid);
+}, 5 * 60 * 1000).unref();
+
+function freeIpTag(req) {
+  return crypto.createHmac("sha256", SESSION_SECRET).update(`free-ip:${clientIp(req)}`).digest("hex").slice(0, 16);
+}
+
+async function lootlabs(path, body) {
+  const r = await fetch(`${LOOTLABS_API}/${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${LOOTLABS_TOKEN}` },
+    body: JSON.stringify({ ...body, api_token: LOOTLABS_TOKEN }),
+  });
+  const text = await r.text();
+  let d;
+  try {
+    d = JSON.parse(text);
+  } catch {
+    throw new Error(`lootlabs ${path} http ${r.status}`);
+  }
+  if (!r.ok || d.type === "error") throw new Error(`lootlabs ${path}: ${typeof d.message === "string" ? d.message : r.status}`);
+  return d.message;
+}
+
+async function getLootLinks() {
+  if (lootLinks.length >= FREE_STEPS) return lootLinks;
+  if (!lootLinksPending) {
+    lootLinksPending = (async () => {
+      const [meta] = await db("shop_meta?select=v&k=eq.lootlabs_links");
+      let links = [];
+      try {
+        links = JSON.parse(meta ? meta.v : "[]");
+      } catch {}
+      links = Array.isArray(links) ? links.filter((s) => typeof s === "string" && /^https:\/\//.test(s)) : [];
+      while (links.length < FREE_STEPS) {
+        const m = await lootlabs("content_locker", {
+          title: `Zero Hub Key ${links.length + 1}/${FREE_STEPS}`,
+          url: `${SHOP_URL}/getkey`,
+          tier_id: Number(env("LOOTLABS_TIER", "3")) || 3,
+          number_of_tasks: Number(env("LOOTLABS_TASKS", "1")) || 1,
+          theme: Number(env("LOOTLABS_THEME", "1")) || 1,
+        });
+        if (!m || typeof m.loot_url !== "string") throw new Error("lootlabs content_locker: no loot_url");
+        links.push(m.loot_url);
+        await db("shop_meta", { method: "POST", body: { k: "lootlabs_links", v: JSON.stringify(links) }, prefer: "resolution=merge-duplicates" });
+      }
+      lootLinks = links;
+      return links;
+    })().finally(() => {
+      lootLinksPending = null;
+    });
+  }
+  return lootLinksPending;
+}
+
+async function activeFreeKey(tag) {
+  const rows = await db(
+    `keys?select=key,expires_at&source=eq.free&note=eq.${q(`ip:${tag}`)}&revoked=is.false&expires_at=gt.${q(new Date().toISOString())}&order=expires_at.desc&limit=1`
+  );
+  return rows[0] || null;
+}
+
+async function issueFreeKey(tag) {
+  const old = await activeFreeKey(tag);
+  if (old) return old;
+  const now = new Date();
+  // Clock starts now (not at first use), so free keys cannot be stockpiled.
+  const [k] = await db("keys", {
+    method: "POST",
+    prefer: "return=representation",
+    body: {
+      key: newKey(),
+      tier: FREE_TIER,
+      hours: FREE_HOURS,
+      activated_at: now.toISOString(),
+      expires_at: new Date(now.getTime() + FREE_HOURS * 3600 * 1000).toISOString(),
+      source: "free",
+      note: `ip:${tag}`,
+    },
+  });
+  return { key: k.key, expires_at: k.expires_at };
+}
+
+function freeOff(res, cors) {
+  return send(res, 503, { ok: false, error: "ระบบคีย์ฟรียังไม่เปิด ซื้อคีย์ที่ร้านได้เลย" }, cors);
+}
+
+async function handleFreeStart(req, res, cors) {
+  if (!LOOTLABS_TOKEN) return freeOff(res, cors);
+  if (freeStartLimited(clientIp(req))) return send(res, 429, { ok: false, error: "ลองบ่อยเกินไป รอสักครู่" }, cors);
+  const body = await readJson(req);
+  const tag = freeIpTag(req);
+  const have = await activeFreeKey(tag);
+  if (have) return send(res, 200, { ok: true, done: true, key: have.key, expires_at: have.expires_at, hours: FREE_HOURS }, cors);
+  const sid = clean(body.sid, 64);
+  const old = sid && freeSessions.get(sid);
+  if (old && Date.now() - old.created < FREE_SESSION_MS) {
+    return send(res, 200, { ok: true, sid, step: old.step, steps: FREE_STEPS, hours: FREE_HOURS }, cors);
+  }
+  const fresh = crypto.randomBytes(18).toString("base64url");
+  freeSessions.set(fresh, { tag, step: 0, nonce: null, issuedAt: 0, created: Date.now() });
+  send(res, 200, { ok: true, sid: fresh, step: 0, steps: FREE_STEPS, hours: FREE_HOURS }, cors);
+}
+
+async function handleFreeLink(req, res, cors) {
+  if (!LOOTLABS_TOKEN) return freeOff(res, cors);
+  if (freeStepLimited(clientIp(req))) return send(res, 429, { ok: false, error: "ลองบ่อยเกินไป รอสักครู่" }, cors);
+  const body = await readJson(req);
+  const sid = clean(body.sid, 64);
+  const s = sid && freeSessions.get(sid);
+  if (!s) return send(res, 400, { ok: false, error: "เซสชันหมดอายุ กดเริ่มใหม่", restart: true }, cors);
+  const nonce = crypto.randomBytes(18).toString("base64url");
+  const dest = `${SHOP_URL}/getkey?s=${encodeURIComponent(sid)}&c=${encodeURIComponent(nonce)}`;
+  let links, enc;
+  try {
+    links = await getLootLinks();
+    enc = String(await lootlabs("url_encryptor", { destination_url: dest }));
+  } catch (err) {
+    console.error("free link:", err.message);
+    return send(res, 502, { ok: false, error: "ระบบลิงก์ Lootlabs มีปัญหาชั่วคราว ลองใหม่อีกครั้ง" }, cors);
+  }
+  if (/[+/=]/.test(enc)) enc = encodeURIComponent(enc);
+  s.nonce = nonce;
+  s.issuedAt = Date.now();
+  const base = links[s.step];
+  send(res, 200, { ok: true, url: `${base}${base.includes("?") ? "&" : "?"}data=${enc}`, step: s.step, steps: FREE_STEPS }, cors);
+}
+
+async function handleFreeVerify(req, res, cors) {
+  if (!LOOTLABS_TOKEN) return freeOff(res, cors);
+  if (freeStepLimited(clientIp(req))) return send(res, 429, { ok: false, error: "ลองบ่อยเกินไป รอสักครู่" }, cors);
+  const body = await readJson(req);
+  const sid = clean(body.sid, 64);
+  const s = sid && freeSessions.get(sid);
+  if (!s) return send(res, 400, { ok: false, error: "เซสชันหมดอายุ กดเริ่มใหม่", restart: true }, cors);
+  if (!s.nonce || !safeEqual(clean(body.c, 64), s.nonce)) {
+    return send(res, 400, { ok: false, error: "ลิงก์นี้ใช้ไม่ได้ ทำ checkpoint ใหม่อีกครั้ง", step: s.step, steps: FREE_STEPS }, cors);
+  }
+  s.nonce = null;
+  if (Date.now() - s.issuedAt < FREE_MIN_SECONDS * 1000) {
+    return send(res, 400, { ok: false, error: "ผ่านเร็วผิดปกติ ทำ checkpoint นี้ใหม่อีกครั้ง", step: s.step, steps: FREE_STEPS }, cors);
+  }
+  s.step += 1;
+  if (s.step < FREE_STEPS) return send(res, 200, { ok: true, step: s.step, steps: FREE_STEPS }, cors);
+  freeSessions.delete(sid);
+  const k = await issueFreeKey(s.tag);
+  send(res, 200, { ok: true, done: true, key: k.key, expires_at: k.expires_at, hours: FREE_HOURS }, cors);
+}
+
+// Expired free keys pile up fast; drop the ones that ended over two days ago.
+setInterval(() => {
+  if (!LOOTLABS_TOKEN || !SUPABASE_URL) return;
+  const cut = new Date(Date.now() - 2 * 86400 * 1000).toISOString();
+  db(`keys?source=eq.free&expires_at=lt.${q(cut)}`, { method: "DELETE" }).catch((e) => console.error("free key cleanup", e.message));
+}, 6 * 3600 * 1000).unref();
+
 const VOUCHER_ERRORS = {
   VOUCHER_OUT_OF_STOCK: "ซองนี้ถูกรับไปหมดแล้ว",
   VOUCHER_NOT_FOUND: "ไม่พบซองนี้ ตรวจลิงก์อีกครั้ง",
@@ -2070,7 +2244,7 @@ async function panelMessage() {
           row(btn("คีย์ของฉัน · My Keys", "📋", 2, "zh:info"), btn("ย้ายเครื่อง · HWID", "🔄", 2, "zh:reset"), btn("เกม · Games", "🎮", 2, "zh:games")),
           { type: 12, items: [{ media: { url: `${PUBLIC_URL}/assets/panel-banner.gif?v=4` } }] },
           text("-# 🔐 ทุกปุ่มตอบกลับให้เห็นเฉพาะคุณ · Replies are only visible to you\n-# 🌐 ตอบเป็นภาษาไทยหรืออังกฤษตามภาษาที่ตั้งใน Discord · Replies follow your Discord language"),
-          row(btn("เว็บร้าน · Shop", "🌐", 5, SHOP_URL), btn("Discord", "💬", 5, DISCORD_INVITE)),
+          row(btn("คีย์ฟรี · Free Key", "🔑", 5, `${SHOP_URL}/getkey`), btn("เว็บร้าน · Shop", "🌐", 5, SHOP_URL), btn("Discord", "💬", 5, DISCORD_INVITE)),
         ],
       },
     ],
@@ -2316,7 +2490,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "throwfood-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freekey-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
@@ -2337,6 +2511,9 @@ async function route(req, res) {
   if (m === "POST" && path === "/api/wallet/slip") return handleSlip(req, res, cors);
   if (m === "GET" && path === "/api/wallet/slips") return handleMySlips(req, res, cors);
   if (m === "POST" && path === "/api/promo/redeem") return handlePromoRedeem(req, res, cors);
+  if (m === "POST" && path === "/api/free/start") return handleFreeStart(req, res, cors);
+  if (m === "POST" && path === "/api/free/link") return handleFreeLink(req, res, cors);
+  if (m === "POST" && path === "/api/free/verify") return handleFreeVerify(req, res, cors);
   if (m === "POST" && path === "/api/discord/interactions") return handleInteraction(req, res);
   if (path.startsWith("/api/admin/")) return handleAdmin(req, res, cors, path, url);
   send(res, 404, { ok: false, error: "not found" }, cors);
