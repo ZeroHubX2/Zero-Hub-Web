@@ -616,7 +616,7 @@ function lootUrlOf(m) {
     try {
       m = JSON.parse(m);
     } catch {
-      return /^https:\/\//.test(m) ? m : null;
+      return /^https?:\/\//.test(m) ? m : null;
     }
   }
   if (Array.isArray(m)) {
@@ -627,7 +627,7 @@ function lootUrlOf(m) {
     return null;
   }
   if (!m || typeof m !== "object") return null;
-  if (typeof m.loot_url === "string" && /^https:\/\//.test(m.loot_url)) return m.loot_url;
+  if (typeof m.loot_url === "string" && /^https?:\/\//.test(m.loot_url)) return m.loot_url;
   if (typeof m.short === "string" && m.short) return `${LOOTLABS_DOMAIN}/s?${m.short}`;
   for (const k of ["message", "data", "link", "result"]) {
     if (m[k] && typeof m[k] === "object") {
@@ -647,7 +647,7 @@ async function getLootLinks() {
       try {
         links = JSON.parse(meta ? meta.v : "[]");
       } catch {}
-      links = Array.isArray(links) ? links.filter((s) => typeof s === "string" && /^https:\/\//.test(s)) : [];
+      links = Array.isArray(links) ? links.filter((s) => typeof s === "string" && /^https?:\/\//.test(s)) : [];
       while (links.length < FREE_STEPS) {
         const m = await lootlabs("content_locker", {
           title: `Zero Hub Key ${links.length + 1}/${FREE_STEPS}`,
@@ -670,10 +670,12 @@ async function getLootLinks() {
   return lootLinksPending;
 }
 
+// Only a logged-in Discord account gets its running key back. Matching by IP handed one person's
+// HWID-locked key to everyone behind the same mobile-carrier or home IP. The IP tag stays in `note` for admins.
 async function activeFreeKey(tag, did) {
-  const who = did ? `or=(note.eq.${q(`ip:${tag}`)},discord_id.eq.${q(did)})` : `note=eq.${q(`ip:${tag}`)}`;
+  if (!did) return null;
   const rows = await db(
-    `keys?select=key,expires_at,discord_id&source=eq.free&${who}&revoked=is.false&expires_at=gt.${q(new Date().toISOString())}&order=expires_at.desc&limit=1`
+    `keys?select=key,expires_at,discord_id&source=eq.free&discord_id=eq.${q(did)}&revoked=is.false&expires_at=gt.${q(new Date().toISOString())}&order=expires_at.desc&limit=1`
   );
   return rows[0] || null;
 }
@@ -2661,7 +2663,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "panel-auto-4" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freekey-6" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
