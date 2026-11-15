@@ -2428,7 +2428,11 @@ async function handlePanelButton(res, body) {
             "**วิธีใช้:** เข้าเกมที่รองรับ → รันใน executor → ใส่คีย์ในหน้าต่างโหลดเดอร์ (ใส่ครั้งเดียว ครั้งต่อไปจำให้เอง)",
             "**How to use:** join a supported game → run it in your executor → enter your key in the loader window (only once, it is remembered)"
           ),
-          T(L, `ยังไม่มีคีย์? ซื้อได้ที่ [zerohub-shop.pages.dev](${SHOP_URL})`, `No key yet? Buy one at [zerohub-shop.pages.dev](${SHOP_URL})`),
+          T(
+            L,
+            `ยังไม่มีคีย์? 🎁 [รับคีย์ฟรี](${SHOP_URL}/getkey) (6 ชม.) หรือ 🛒 [ซื้อคีย์](${SHOP_URL}/shop)`,
+            `No key yet? 🎁 [Get a free key](${SHOP_URL}/getkey) (6 h) or 🛒 [buy one](${SHOP_URL}/shop)`
+          ),
           T(
             L,
             "-# 📱 มือถือ: กดค้างที่ข้อความสคริปต์ด้านล่าง → คัดลอกข้อความ ได้สคริปต์ล้วนๆ ไม่ต้องลบอะไร",
@@ -2590,7 +2594,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freekey-4" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freekey-5" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
