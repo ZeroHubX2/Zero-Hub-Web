@@ -594,6 +594,7 @@ async function lootlabs(path, body) {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${LOOTLABS_TOKEN}` },
     body: JSON.stringify({ ...body, api_token: LOOTLABS_TOKEN }),
+    signal: AbortSignal.timeout(15000),
   });
   const text = await r.text();
   let d;
@@ -2589,7 +2590,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freekey-3" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freekey-4" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
