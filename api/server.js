@@ -26,6 +26,7 @@ const SCRIPT_FILES = (() => {
     animeeyes: "animeeyes.lua",
     aotr: "aotr.lua",
     venom: "venom.lua",
+    throwfood: "throwfood.lua",
   };
   try {
     return { ...defaults, ...JSON.parse(env("SCRIPT_FILES", "{}")) };
@@ -2010,6 +2011,7 @@ const PANEL_GAMES = [
   ["👁️", "Anime Eyes"],
   ["⚔️", "Attack on Titan Revolution"],
   ["🕷️", "Venom Evolution"],
+  ["🍖", "Throw Food For Animals"],
 ];
 
 function btn(label, emoji, style, id) {
@@ -2314,7 +2316,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "venom-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "throwfood-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
