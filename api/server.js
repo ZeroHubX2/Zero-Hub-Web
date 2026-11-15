@@ -1595,6 +1595,16 @@ async function handleAdmin(req, res, cors, path, url) {
     if (adminFailLimited(ip)) return send(res, 429, { ok: false, error: "ลองบ่อยเกินไป" }, cors);
     return send(res, 401, { ok: false, error: "รหัสแอดมินไม่ถูกต้อง" }, cors);
   }
+  // Lootlabs checkpoint links: GET shows what is saved, DELETE forgets them so they are created again.
+  if (path === "/api/admin/lootlabs") {
+    if (req.method === "DELETE") {
+      await db("shop_meta?k=eq.lootlabs_links", { method: "DELETE" });
+      lootLinks = env("LOOTLABS_LINKS").split(",").map((s) => s.trim()).filter(Boolean);
+      return send(res, 200, { ok: true, cleared: true }, cors);
+    }
+    const [meta] = await db("shop_meta?select=v&k=eq.lootlabs_links");
+    return send(res, 200, { ok: true, saved: meta ? meta.v : null, memory: lootLinks, env: !!env("LOOTLABS_LINKS") }, cors);
+  }
   if (req.method === "GET" && path === "/api/admin/keys") {
     const term = clean(url.searchParams.get("q"), 60);
     const filter = url.searchParams.get("filter") || "all";
@@ -2644,7 +2654,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "panel-auto-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "panel-auto-2" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
