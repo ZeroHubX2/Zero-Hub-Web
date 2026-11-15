@@ -577,6 +577,9 @@ const FREE_SESSION_MS = 30 * 60 * 1000;
 const freeSessions = new Map();
 const freeStartLimited = limiter(20, 10 * 60 * 1000);
 const freeStepLimited = limiter(40, 10 * 60 * 1000);
+// loot-link.com is on common ad-block lists; lootdest.org (what Lootlabs returns for this account) is not.
+const LOOTLABS_DOMAIN = env("LOOTLABS_DOMAIN", "https://lootdest.org").replace(/\/+$/, "");
+const lootDomain = (u) => String(u).replace(/^https:\/\/(?:www\.)?loot-link\.com(?=\/)/i, LOOTLABS_DOMAIN);
 let lootLinks = env("LOOTLABS_LINKS").split(",").map((s) => s.trim()).filter(Boolean);
 let lootLinksPending = null;
 
@@ -625,7 +628,7 @@ function lootUrlOf(m) {
   }
   if (!m || typeof m !== "object") return null;
   if (typeof m.loot_url === "string" && /^https:\/\//.test(m.loot_url)) return m.loot_url;
-  if (typeof m.short === "string" && m.short) return `https://loot-link.com/s?${m.short}`;
+  if (typeof m.short === "string" && m.short) return `${LOOTLABS_DOMAIN}/s?${m.short}`;
   for (const k of ["message", "data", "link", "result"]) {
     if (m[k] && typeof m[k] === "object") {
       const u = lootUrlOf(m[k]);
@@ -636,7 +639,7 @@ function lootUrlOf(m) {
 }
 
 async function getLootLinks() {
-  if (lootLinks.length >= FREE_STEPS) return lootLinks;
+  if (lootLinks.length >= FREE_STEPS) return lootLinks.map(lootDomain);
   if (!lootLinksPending) {
     lootLinksPending = (async () => {
       const [meta] = await db("shop_meta?select=v&k=eq.lootlabs_links");
@@ -658,8 +661,8 @@ async function getLootLinks() {
         links.push(url);
         await db("shop_meta", { method: "POST", body: { k: "lootlabs_links", v: JSON.stringify(links) }, prefer: "resolution=merge-duplicates" });
       }
-      lootLinks = links;
-      return links;
+      lootLinks = links.map(lootDomain);
+      return lootLinks;
     })().finally(() => {
       lootLinksPending = null;
     });
@@ -2654,7 +2657,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "panel-auto-2" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "panel-auto-3" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
