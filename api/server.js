@@ -766,7 +766,11 @@ async function handleFreeLink(req, res, cors) {
     console.error("free link:", err.message);
     return send(res, 502, { ok: false, error: "ระบบลิงก์ Lootlabs มีปัญหาชั่วคราว ลองใหม่อีกครั้ง" }, cors);
   }
-  if (/[+/=]/.test(enc)) enc = encodeURIComponent(enc);
+  // Lootlabs returns the token partly URL-encoded (e.g. %2B next to a raw "/"): decode fully, then encode once.
+  try {
+    enc = decodeURIComponent(enc);
+  } catch {}
+  enc = encodeURIComponent(enc);
   s.nonce = nonce;
   s.issuedAt = Date.now();
   const base = links[s.step];
@@ -2657,7 +2661,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "panel-auto-3" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "panel-auto-4" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
