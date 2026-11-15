@@ -722,12 +722,31 @@ async function issueFreeKey(tag, who = {}) {
   return { key: k.key, expires_at: k.expires_at };
 }
 
+// Admin switch (shop_meta.free_open = "0" closes the free key page) so it can be paused without a deploy.
+const FREE_CLOSED_TEXT = "ตอนนี้กำลังปรับปรุงระบบคีย์ฟรี จะกลับมาเปิดอีกครั้ง รอประกาศใน Discord นะครับ";
+let freeOpenCache = { v: true, at: 0 };
+async function freeIsOpen() {
+  if (Date.now() - freeOpenCache.at < 30 * 1000) return freeOpenCache.v;
+  try {
+    const [meta] = await db("shop_meta?select=v&k=eq.free_open");
+    freeOpenCache = { v: !(meta && meta.v === "0"), at: Date.now() };
+  } catch {
+    freeOpenCache.at = Date.now();
+  }
+  return freeOpenCache.v;
+}
+async function freeGate(res, cors) {
+  if (!LOOTLABS_TOKEN) return freeOff(res, cors);
+  if (!(await freeIsOpen())) return send(res, 503, { ok: false, maintenance: true, error: FREE_CLOSED_TEXT }, cors);
+  return null;
+}
+
 function freeOff(res, cors) {
   return send(res, 503, { ok: false, error: "ระบบคีย์ฟรียังไม่เปิด ซื้อคีย์ที่ร้านได้เลย" }, cors);
 }
 
 async function handleFreeStart(req, res, cors) {
-  if (!LOOTLABS_TOKEN) return freeOff(res, cors);
+  if (await freeGate(res, cors)) return;
   if (freeStartLimited(clientIp(req))) return send(res, 429, { ok: false, error: "ลองบ่อยเกินไป รอสักครู่" }, cors);
   const body = await readJson(req);
   const tag = freeIpTag(req);
@@ -748,7 +767,7 @@ async function handleFreeStart(req, res, cors) {
 }
 
 async function handleFreeLink(req, res, cors) {
-  if (!LOOTLABS_TOKEN) return freeOff(res, cors);
+  if (await freeGate(res, cors)) return;
   if (freeStepLimited(clientIp(req))) return send(res, 429, { ok: false, error: "ลองบ่อยเกินไป รอสักครู่" }, cors);
   const body = await readJson(req);
   const sid = clean(body.sid, 64);
@@ -780,7 +799,7 @@ async function handleFreeLink(req, res, cors) {
 }
 
 async function handleFreeVerify(req, res, cors) {
-  if (!LOOTLABS_TOKEN) return freeOff(res, cors);
+  if (await freeGate(res, cors)) return;
   if (freeStepLimited(clientIp(req))) return send(res, 429, { ok: false, error: "ลองบ่อยเกินไป รอสักครู่" }, cors);
   const body = await readJson(req);
   const sid = clean(body.sid, 64);
@@ -1603,6 +1622,18 @@ async function handleAdmin(req, res, cors, path, url) {
   if (!isAdmin(req)) {
     if (adminFailLimited(ip)) return send(res, 429, { ok: false, error: "ลองบ่อยเกินไป" }, cors);
     return send(res, 401, { ok: false, error: "รหัสแอดมินไม่ถูกต้อง" }, cors);
+  }
+  // Free key page switch: GET shows it, POST {open:true|false} opens or closes it.
+  if (path === "/api/admin/free") {
+    if (req.method === "POST") {
+      const body = await readJson(req);
+      const open = body.open !== false;
+      await db("shop_meta", { method: "POST", body: { k: "free_open", v: open ? "1" : "0" }, prefer: "resolution=merge-duplicates" });
+      freeOpenCache = { v: open, at: Date.now() };
+      return send(res, 200, { ok: true, open }, cors);
+    }
+    freeOpenCache.at = 0;
+    return send(res, 200, { ok: true, open: await freeIsOpen(), token: !!LOOTLABS_TOKEN }, cors);
   }
   // Lootlabs checkpoint links: GET shows what is saved, DELETE forgets them so they are created again.
   if (path === "/api/admin/lootlabs") {
@@ -2663,7 +2694,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freekey-6" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freekey-7" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
