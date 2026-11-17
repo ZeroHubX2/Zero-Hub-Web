@@ -571,7 +571,7 @@ const LOOTLABS_TOKEN = env("LOOTLABS_TOKEN");
 // Linkvertise (preferred when its anti-bypass token is set): one fixed target link whose target is SHOP_URL/getkey.
 // After the ad step Linkvertise appends ?hash=<64 hex>, valid 10 s and single use, checked with the token.
 const LINKVERTISE_TOKEN = env("LINKVERTISE_TOKEN");
-const LINKVERTISE_LINK = env("LINKVERTISE_LINK", "https://linkvertise.com/10606718/sOTRxo0pJFBG");
+const LINKVERTISE_LINK = env("LINKVERTISE_LINK", "https://link-hub.net/10788006/bCHGOd0BQ2Cq");
 const LINKVERTISE_API = env("LINKVERTISE_API", "https://publisher.linkvertise.com/api/v1/anti_bypassing");
 // Lootlabs code is kept but unused: free keys run on Linkvertise only.
 const FREE_PROVIDER = "linkvertise";
@@ -2729,7 +2729,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "linkvertise-2" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "linkvertise-3" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
