@@ -573,7 +573,8 @@ const LOOTLABS_TOKEN = env("LOOTLABS_TOKEN");
 const LINKVERTISE_TOKEN = env("LINKVERTISE_TOKEN");
 const LINKVERTISE_LINK = env("LINKVERTISE_LINK", "https://linkvertise.com/10606718/sOTRxo0pJFBG");
 const LINKVERTISE_API = env("LINKVERTISE_API", "https://publisher.linkvertise.com/api/v1/anti_bypassing");
-const FREE_PROVIDER = LINKVERTISE_TOKEN ? "linkvertise" : "lootlabs";
+// Lootlabs code is kept but unused: free keys run on Linkvertise only.
+const FREE_PROVIDER = "linkvertise";
 const LOOTLABS_API = env("LOOTLABS_API", "https://creators.lootlabs.gg/api/public").replace(/\/+$/, "");
 const FREE_STEPS = Math.max(1, Math.min(5, Number(env("FREE_STEPS", "2")) || 2));
 const FREE_HOURS = Math.max(1, Number(env("FREE_HOURS", "6")) || 6);
@@ -742,7 +743,7 @@ async function freeIsOpen() {
   return freeOpenCache.v;
 }
 async function freeGate(res, cors) {
-  if (!LOOTLABS_TOKEN && !LINKVERTISE_TOKEN) return freeOff(res, cors);
+  if (!LINKVERTISE_TOKEN) return freeOff(res, cors);
   if (!(await freeIsOpen())) return send(res, 503, { ok: false, maintenance: true, error: FREE_CLOSED_TEXT }, cors);
   return null;
 }
@@ -856,7 +857,7 @@ async function handleFreeVerify(req, res, cors) {
 
 // Expired free keys pile up fast; drop the ones that ended over two days ago.
 setInterval(() => {
-  if ((!LOOTLABS_TOKEN && !LINKVERTISE_TOKEN) || !SUPABASE_URL) return;
+  if (!LINKVERTISE_TOKEN || !SUPABASE_URL) return;
   const cut = new Date(Date.now() - 2 * 86400 * 1000).toISOString();
   db(`keys?source=eq.free&expires_at=lt.${q(cut)}`, { method: "DELETE" }).catch((e) => console.error("free key cleanup", e.message));
 }, 6 * 3600 * 1000).unref();
@@ -1667,7 +1668,7 @@ async function handleAdmin(req, res, cors, path, url) {
       return send(res, 200, { ok: true, open }, cors);
     }
     freeOpenCache.at = 0;
-    return send(res, 200, { ok: true, open: await freeIsOpen(), token: !!(LOOTLABS_TOKEN || LINKVERTISE_TOKEN), provider: FREE_PROVIDER }, cors);
+    return send(res, 200, { ok: true, open: await freeIsOpen(), token: !!LINKVERTISE_TOKEN, provider: FREE_PROVIDER }, cors);
   }
   // Lootlabs checkpoint links: GET shows what is saved, DELETE forgets them so they are created again.
   if (path === "/api/admin/lootlabs") {
@@ -2728,7 +2729,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "linkvertise-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "linkvertise-2" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
