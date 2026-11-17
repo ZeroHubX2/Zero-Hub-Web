@@ -568,6 +568,12 @@ async function handleKeyReset(req, res, cors) {
 // Each checkpoint gets a one-time nonce in its return URL. The URL is encrypted with the
 // Lootlabs Redirect API (anti-bypass), so the visitor only learns it by finishing the link.
 const LOOTLABS_TOKEN = env("LOOTLABS_TOKEN");
+// Linkvertise (preferred when its anti-bypass token is set): one fixed target link whose target is SHOP_URL/getkey.
+// After the ad step Linkvertise appends ?hash=<64 hex>, valid 10 s and single use, checked with the token.
+const LINKVERTISE_TOKEN = env("LINKVERTISE_TOKEN");
+const LINKVERTISE_LINK = env("LINKVERTISE_LINK", "https://linkvertise.com/10606718/sOTRxo0pJFBG");
+const LINKVERTISE_API = env("LINKVERTISE_API", "https://publisher.linkvertise.com/api/v1/anti_bypassing");
+const FREE_PROVIDER = LINKVERTISE_TOKEN ? "linkvertise" : "lootlabs";
 const LOOTLABS_API = env("LOOTLABS_API", "https://creators.lootlabs.gg/api/public").replace(/\/+$/, "");
 const FREE_STEPS = Math.max(1, Math.min(5, Number(env("FREE_STEPS", "2")) || 2));
 const FREE_HOURS = Math.max(1, Number(env("FREE_HOURS", "6")) || 6);
@@ -736,7 +742,7 @@ async function freeIsOpen() {
   return freeOpenCache.v;
 }
 async function freeGate(res, cors) {
-  if (!LOOTLABS_TOKEN) return freeOff(res, cors);
+  if (!LOOTLABS_TOKEN && !LINKVERTISE_TOKEN) return freeOff(res, cors);
   if (!(await freeIsOpen())) return send(res, 503, { ok: false, maintenance: true, error: FREE_CLOSED_TEXT }, cors);
   return null;
 }
@@ -759,11 +765,11 @@ async function handleFreeStart(req, res, cors) {
   const sid = clean(body.sid, 64);
   const old = sid && freeSessions.get(sid);
   if (old && Date.now() - old.created < FREE_SESSION_MS) {
-    return send(res, 200, { ok: true, sid, step: old.step, steps: FREE_STEPS, hours: FREE_HOURS }, cors);
+    return send(res, 200, { ok: true, sid, step: old.step, steps: FREE_STEPS, hours: FREE_HOURS, provider: FREE_PROVIDER }, cors);
   }
   const fresh = crypto.randomBytes(18).toString("base64url");
   freeSessions.set(fresh, { tag, step: 0, nonce: null, issuedAt: 0, created: Date.now() });
-  send(res, 200, { ok: true, sid: fresh, step: 0, steps: FREE_STEPS, hours: FREE_HOURS }, cors);
+  send(res, 200, { ok: true, sid: fresh, step: 0, steps: FREE_STEPS, hours: FREE_HOURS, provider: FREE_PROVIDER }, cors);
 }
 
 async function handleFreeLink(req, res, cors) {
@@ -773,6 +779,12 @@ async function handleFreeLink(req, res, cors) {
   const sid = clean(body.sid, 64);
   const s = sid && freeSessions.get(sid);
   if (!s) return send(res, 400, { ok: false, error: "เซสชันหมดอายุ กดเริ่มใหม่", restart: true }, cors);
+  if (FREE_PROVIDER === "linkvertise") {
+    s.nonce = null;
+    s.armed = true;
+    s.issuedAt = Date.now();
+    return send(res, 200, { ok: true, url: LINKVERTISE_LINK, step: s.step, steps: FREE_STEPS, provider: FREE_PROVIDER }, cors);
+  }
   const nonce = crypto.randomBytes(18).toString("base64url");
   const dest = `${SHOP_URL}/getkey?s=${encodeURIComponent(sid)}&c=${encodeURIComponent(nonce)}`;
   let links, enc;
@@ -805,10 +817,32 @@ async function handleFreeVerify(req, res, cors) {
   const sid = clean(body.sid, 64);
   const s = sid && freeSessions.get(sid);
   if (!s) return send(res, 400, { ok: false, error: "เซสชันหมดอายุ กดเริ่มใหม่", restart: true }, cors);
-  if (!s.nonce || !safeEqual(clean(body.c, 64), s.nonce)) {
-    return send(res, 400, { ok: false, error: "ลิงก์นี้ใช้ไม่ได้ ทำ checkpoint ใหม่อีกครั้ง", step: s.step, steps: FREE_STEPS }, cors);
+  if (FREE_PROVIDER === "linkvertise") {
+    const hash = clean(body.hash, 128);
+    if (!s.armed || !/^[a-f0-9]{64}$/i.test(hash)) {
+      return send(res, 400, { ok: false, error: "ลิงก์นี้ใช้ไม่ได้ ทำ checkpoint ใหม่อีกครั้ง", step: s.step, steps: FREE_STEPS }, cors);
+    }
+    s.armed = false;
+    let good = false;
+    try {
+      const r = await fetch(`${LINKVERTISE_API}?token=${encodeURIComponent(LINKVERTISE_TOKEN)}&hash=${encodeURIComponent(hash)}`, {
+        method: "POST",
+        signal: AbortSignal.timeout(8000),
+      });
+      const t = (await r.text()).trim().replace(/^"|"$/g, "").toLowerCase();
+      good = t === "true";
+      if (!good && t !== "false") console.error("linkvertise verify:", r.status, t.slice(0, 80));
+    } catch (err) {
+      console.error("linkvertise verify:", err.message);
+      return send(res, 502, { ok: false, error: "ตรวจกับ Linkvertise ไม่สำเร็จ ทำ checkpoint นี้ใหม่อีกครั้ง", step: s.step, steps: FREE_STEPS }, cors);
+    }
+    if (!good) return send(res, 400, { ok: false, error: "Linkvertise ไม่ยืนยันว่าผ่านจริง (ห้ามใช้ตัวข้ามลิงก์) ทำ checkpoint นี้ใหม่อีกครั้ง", step: s.step, steps: FREE_STEPS }, cors);
+  } else {
+    if (!s.nonce || !safeEqual(clean(body.c, 64), s.nonce)) {
+      return send(res, 400, { ok: false, error: "ลิงก์นี้ใช้ไม่ได้ ทำ checkpoint ใหม่อีกครั้ง", step: s.step, steps: FREE_STEPS }, cors);
+    }
+    s.nonce = null;
   }
-  s.nonce = null;
   if (Date.now() - s.issuedAt < FREE_MIN_SECONDS * 1000) {
     return send(res, 400, { ok: false, error: "ผ่านเร็วผิดปกติ ทำ checkpoint นี้ใหม่อีกครั้ง", step: s.step, steps: FREE_STEPS }, cors);
   }
@@ -822,7 +856,7 @@ async function handleFreeVerify(req, res, cors) {
 
 // Expired free keys pile up fast; drop the ones that ended over two days ago.
 setInterval(() => {
-  if (!LOOTLABS_TOKEN || !SUPABASE_URL) return;
+  if ((!LOOTLABS_TOKEN && !LINKVERTISE_TOKEN) || !SUPABASE_URL) return;
   const cut = new Date(Date.now() - 2 * 86400 * 1000).toISOString();
   db(`keys?source=eq.free&expires_at=lt.${q(cut)}`, { method: "DELETE" }).catch((e) => console.error("free key cleanup", e.message));
 }, 6 * 3600 * 1000).unref();
@@ -1633,7 +1667,7 @@ async function handleAdmin(req, res, cors, path, url) {
       return send(res, 200, { ok: true, open }, cors);
     }
     freeOpenCache.at = 0;
-    return send(res, 200, { ok: true, open: await freeIsOpen(), token: !!LOOTLABS_TOKEN }, cors);
+    return send(res, 200, { ok: true, open: await freeIsOpen(), token: !!(LOOTLABS_TOKEN || LINKVERTISE_TOKEN), provider: FREE_PROVIDER }, cors);
   }
   // Lootlabs checkpoint links: GET shows what is saved, DELETE forgets them so they are created again.
   if (path === "/api/admin/lootlabs") {
@@ -2694,7 +2728,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freekey-7" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "linkvertise-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
