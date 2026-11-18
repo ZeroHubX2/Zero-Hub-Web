@@ -3205,7 +3205,7 @@ async function websiteMessage(given) {
             ],
             accessory: { type: 11, media: { url: `${PUBLIC_URL}/assets/panel-logo.png?v=2` } },
           },
-          { type: 12, items: [{ media: { url: `${SHOP_URL}/og.jpg` }, description: "Zero Hub Shop" }] },
+          { type: 12, items: [{ media: { url: `${PUBLIC_URL}/assets/panel-banner.gif?v=4` }, description: "Zero Hub Shop" }] },
           line(true),
           text("### 🧭 เมนูในเว็บ · What you can do"),
           page("🛒", "ซื้อคีย์ · Buy Keys", "เลือกแพ็กเกจ ใส่โค้ดส่วนลดได้ ได้คีย์ทันทีหลังจ่าย", "ร้านค้า", `${SHOP_URL}/shop`),
@@ -3379,7 +3379,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "website-card-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "website-card-2" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
