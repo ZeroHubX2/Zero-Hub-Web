@@ -2779,7 +2779,7 @@ function updImageUrl(d) {
   return `${SHOP_URL}/games/${d.game}.webp`;
 }
 function updLink(e) {
-  return `https://discord.com/channels/${DISCORD_GUILD_ID}/${e.c}/${e.m}`;
+  return `https://discord.com/channels/${e.gd || DISCORD_GUILD_ID}/${e.c}/${e.m}`;
 }
 
 // The announcement itself. `imageRef` overrides the gallery URL (attachment://… when the image is re-uploaded).
@@ -2798,7 +2798,7 @@ function updateMessage(d, imageRef) {
   const counts = { new: 0, fix: 0, chg: 0 };
   for (const [k, , items] of lists) counts[k] = items.filter((x) => x.startsWith("- ")).length;
   const ts = Math.floor((d.postedAt || Date.now()) / 1000);
-  const ping = d.silent || !d.role ? "" : d.role === DISCORD_GUILD_ID ? "@everyone" : `<@&${d.role}>`;
+  const ping = d.silent || !d.role ? "" : d.role === d.guild ? "@everyone" : `<@&${d.role}>`;
 
   const parts = [
     {
@@ -2839,7 +2839,7 @@ function updateMessage(d, imageRef) {
 function updatePreview(id, d, note) {
   const { container } = updateMessage(d);
   const where = `<#${d.channel}>`;
-  const who = d.silent || !d.role ? "ไม่แท็กใคร" : d.role === DISCORD_GUILD_ID ? "@everyone" : `<@&${d.role}>`;
+  const who = d.silent || !d.role ? "ไม่แท็กใคร" : d.role === d.guild ? "@everyone" : `<@&${d.role}>`;
   const extras = [d.thread && "💬 เปิดเธรดคุย", d.react && "😀 ใส่รีแอค", "📣 กด Publish อัตโนมัติ (ถ้าเป็นห้องประกาศ)"].filter(Boolean).join(" · ");
   return {
     flags: 64 | (1 << 15),
@@ -2895,7 +2895,8 @@ function handleUpdateCommand(res, body) {
     type: o.type || "feature",
     status: o.status || "ok",
     version: String(o.version || "").trim().slice(0, 32),
-    role: o.ping || DISCORD_UPDATE_ROLE_ID || DISCORD_BUYER_ROLE_ID || "",
+    guild: body.guild_id || DISCORD_GUILD_ID,
+    role: o.ping || (!body.guild_id || body.guild_id === DISCORD_GUILD_ID ? DISCORD_UPDATE_ROLE_ID || DISCORD_BUYER_ROLE_ID || "" : ""),
     silent: !!o.silent,
     channel: o.channel || body.channel_id,
     chanType: chan ? chan.type : 0,
@@ -2905,7 +2906,7 @@ function handleUpdateCommand(res, body) {
     fields: {},
   };
   if (o.copy_last) {
-    const prev = (updLog || []).filter((e) => e.g === d.game && e.f).pop();
+    const prev = (updLog || []).filter((e) => (e.gd || DISCORD_GUILD_ID) === d.guild && e.g === d.game && e.f).pop();
     if (prev) d.fields = { ...prev.f };
   }
   const id = crypto.randomBytes(6).toString("hex");
@@ -2922,7 +2923,7 @@ async function handleUpdateModal(res, body, id) {
   const log = await quickUpdLog();
   let note = "";
   if (!d.version) {
-    const prev = log.filter((e) => e.g === d.game).pop();
+    const prev = log.filter((e) => (e.gd || DISCORD_GUILD_ID) === d.guild && e.g === d.game).pop();
     d.version = bumpVersion(prev && prev.v);
     note = prev ? `-# 🔢 เวอร์ชันนับต่อให้อัตโนมัติจาก ${prev.v}` : "-# 🔢 ไม่ได้ใส่เวอร์ชัน เลยตั้งเป็น v1.0";
   }
@@ -2968,7 +2969,7 @@ async function postUpdate(id, d) {
   const posted = file ? await discordPostFile(`/channels/${d.channel}/messages`, payload, file) : await discordApi(`/channels/${d.channel}/messages`, "POST", payload);
   const g = updGame(d.game);
   const log = [...(await loadUpdLog().catch(() => updLog || []))];
-  log.push({ n: d.no, g: d.game, v: d.version, ty: d.type, st: d.status, c: posted.channel_id || d.channel, m: posted.id, t: d.postedAt, by: d.uid, k: counts, f: d.fields });
+  log.push({ n: d.no, gd: d.guild, g: d.game, v: d.version, ty: d.type, st: d.status, c: posted.channel_id || d.channel, m: posted.id, t: d.postedAt, by: d.uid, k: counts, f: d.fields });
   await saveUpdLog(log).catch((err) => console.error("update log save:", err.message));
   updDrafts.delete(id);
   // Extras run after the reply; a failure in one never blocks the others.
@@ -2986,13 +2987,14 @@ async function postUpdate(id, d) {
       }
     }
   })();
-  return updLink({ c: posted.channel_id || d.channel, m: posted.id });
+  return updLink({ gd: d.guild, c: posted.channel_id || d.channel, m: posted.id });
 }
 
 async function handleUpdateButton(res, body, id) {
   const [, , act, arg] = id.split(":");
   if (act === "h") {
-    const log = (await quickUpdLog()).filter((e) => arg === "all" || e.g === arg).slice(-10).reverse();
+    const gid = body.guild_id || DISCORD_GUILD_ID;
+    const log = (await quickUpdLog()).filter((e) => (e.gd || DISCORD_GUILD_ID) === gid && (arg === "all" || e.g === arg)).slice(-10).reverse();
     const g = updGame(arg);
     const lines = log.map((e) => {
       const ty = UPDATE_TYPES[e.ty] || UPDATE_TYPES.feature;
@@ -3147,7 +3149,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "update-post-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "update-post-2" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
