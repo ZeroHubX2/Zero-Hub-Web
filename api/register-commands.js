@@ -205,6 +205,17 @@ const commands = [
       { type: BOOLEAN, name: "copy_last", description: "ดึงข้อความจากอัปเดตครั้งก่อนของเกมนี้มาแก้ต่อ" },
     ],
   },
+  {
+    name: "addemoji",
+    description: "เพิ่มอีโมจิให้บอท ใช้ได้ทุกเซิร์ฟ (ใช้ใน /update ด้วย :ชื่อ:) (แอดมิน)",
+    default_member_permissions: ADMIN,
+    dm_permission: false,
+    options: [
+      { type: STRING, name: "name", description: "ชื่ออีโมจิ (a-z 0-9 _)", required: true, min_length: 2, max_length: 32 },
+      { type: ATTACHMENT, name: "image", description: "ไฟล์รูป png/jpg/gif/webp ไม่เกิน 256 KB" },
+      { type: STRING, name: "link", description: "หรือลิงก์อีโมจิ (คลิกขวาอีโมจิ > คัดลอกลิงก์) / <:ชื่อ:ไอดี>", max_length: 300 },
+    ],
+  },
 ];
 
 fetch(`https://discord.com/api/v10/applications/${APP_ID}/guilds/${GUILD_ID}/commands`, {

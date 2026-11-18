@@ -2380,6 +2380,10 @@ async function handleInteraction(req, res) {
   const name = body.data && body.data.name;
   if (name === "panel") return handlePanelCommand(res, body);
   if (name === "update") return handleUpdateCommand(res, body);
+  if (name === "addemoji") {
+    if (!discordIsAdmin(body.member)) return send(res, 200, { type: 4, data: { flags: 64, content: "คำสั่งนี้สำหรับแอดมินเท่านั้น" } });
+    return deferred(res, body, () => addAppEmoji(optionsOf(body.data), (body.data && body.data.resolved) || {}), "addemoji");
+  }
   await deferred(res, body, () => runCommand(name, optionsOf(body.data), body.member, body.user, langOf(body)), name);
 }
 
@@ -2770,40 +2774,54 @@ function updBullets(raw, limit = 1400) {
   return out;
 }
 
-// Custom emoji: ":name:" typed anywhere is swapped for that server emoji; reactions accept unicode, <:name:id> or :name:.
+// Custom emoji: ":name:" typed anywhere becomes that emoji. Looked up in this server's emojis, then the bot's own
+// application emojis (added with /addemoji, usable in every server). Names that are not found are reported in the preview.
 const emojiCache = new Map();
-async function guildEmojis(gid) {
-  const c = emojiCache.get(gid);
+async function cachedEmojis(key, load) {
+  const c = emojiCache.get(key);
   if (c && Date.now() - c.at < 10 * 60 * 1000) return c.list;
-  let list = c ? c.list : [];
   try {
-    list = await Promise.race([discordApi(`/guilds/${gid}/emojis`, "GET"), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 1500))]);
-    emojiCache.set(gid, { at: Date.now(), list });
+    const list = await Promise.race([load(), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2000))]);
+    emojiCache.set(key, { at: Date.now(), list: Array.isArray(list) ? list : [] });
   } catch (err) {
-    console.error("guild emojis:", err.message);
+    console.error("emojis", key, err.message);
   }
-  return list || [];
+  return (emojiCache.get(key) || {}).list || [];
+}
+async function guildEmojis(gid) {
+  const [g, a] = await Promise.all([
+    cachedEmojis(`g:${gid}`, () => discordApi(`/guilds/${gid}/emojis`, "GET")),
+    cachedEmojis("app", async () => ((await discordApi(`/applications/${DISCORD_APP_ID}/emojis`, "GET")) || {}).items),
+  ]);
+  return [...g, ...a];
 }
 function emojiTag(e) {
   return `<${e.animated ? "a" : ""}:${e.name}:${e.id}>`;
 }
-function resolveEmojiText(str, list) {
-  if (!str || !list.length) return str || "";
+function findEmoji(list, name) {
+  const low = name.toLowerCase();
+  const bare = low.replace(/^a_/, "");
+  return list.find((x) => x.name === name) || list.find((x) => x.name.toLowerCase() === low) || list.find((x) => x.name.toLowerCase() === bare);
+}
+function resolveEmojiText(str, list, missing) {
+  if (!str) return "";
   return String(str).replace(/(<a?)?:([\w~]{2,32}):(\d+>)?/g, (m, pre, name, post) => {
     if (pre || post) return m;
-    const e = list.find((x) => x.name === name) || list.find((x) => x.name.toLowerCase() === name.toLowerCase());
+    const e = findEmoji(list, name);
+    if (!e && missing) missing.add(name);
     return e ? emojiTag(e) : m;
   });
 }
 const DEFAULT_REACTIONS = ["🔥", "❤️", "👍", "🎉"];
-function parseReactions(str, list) {
+function parseReactions(str, list, missing) {
   const out = [];
   for (const tok of String(str || "").match(/<a?:\w+:\d+>|:[\w~]{2,32}:|[^\s,:<>]+/g) || []) {
     let m = tok.match(/^<a?:(\w+):(\d+)>$/);
     if (m) out.push({ api: `${m[1]}:${m[2]}`, show: tok });
     else if ((m = tok.match(/^:([\w~]+):$/))) {
-      const e = list.find((x) => x.name === m[1]) || list.find((x) => x.name.toLowerCase() === m[1].toLowerCase());
+      const e = findEmoji(list, m[1]);
       if (e) out.push({ api: `${e.name}:${e.id}`, show: emojiTag(e) });
+      else if (missing) missing.add(m[1]);
     } else if (/\p{Extended_Pictographic}|\p{Regional_Indicator}|⃣/u.test(tok)) {
       for (const g of [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(tok)].map((x) => x.segment)) {
         if (/\p{Extended_Pictographic}|\p{Regional_Indicator}|⃣/u.test(g)) out.push({ api: g, show: g });
@@ -2959,6 +2977,44 @@ function handleUpdateCommand(res, body) {
   send(res, 200, updateModal(id, d));
 }
 
+// /addemoji: uploads an image (file, emoji link or <:name:id>) as an application emoji the bot can use everywhere.
+async function addAppEmoji(o, resolved) {
+  let src = "";
+  let animated = false;
+  if (o.image) {
+    const a = resolved.attachments && resolved.attachments[o.image];
+    if (!a || !/^image\/(png|jpe?g|gif|webp)/.test(a.content_type || "")) return { content: "ไฟล์ต้องเป็นรูป png / jpg / gif / webp" };
+    src = a.url;
+    animated = /gif/.test(a.content_type);
+  } else if (o.link) {
+    const raw = String(o.link).trim();
+    let m = raw.match(/^<(a?):\w+:(\d+)>$/) || raw.match(/^(?:https?:\/\/)?(?:cdn|media)\.discordapp\.(?:com|net)\/emojis\/(\d+)\.(\w+)/);
+    if (m && raw.startsWith("<")) {
+      animated = !!m[1];
+      src = `https://cdn.discordapp.com/emojis/${m[2]}.${animated ? "gif" : "png"}`;
+    } else if (m) {
+      animated = /gif/.test(m[2]) || /animated=true/.test(raw);
+      src = `https://cdn.discordapp.com/emojis/${m[1]}.${animated ? "gif" : "png"}`;
+    } else if ((m = raw.match(/^\d{15,22}$/))) src = `https://cdn.discordapp.com/emojis/${raw}.png`;
+    else return { content: "ลิงก์ไม่ถูกต้อง ใช้ลิงก์รูปอีโมจิ เช่น `https://cdn.discordapp.com/emojis/123….webp` หรือ `<:ชื่อ:ไอดี>`" };
+  } else return { content: "ใส่ `image` (ไฟล์รูป) หรือ `link` (ลิงก์อีโมจิ) อย่างใดอย่างหนึ่ง" };
+  const name = String(o.name || "").trim().replace(/^:|:$/g, "");
+  if (!/^\w{2,32}$/.test(name)) return { content: "ชื่ออีโมจิใช้ได้แค่ a-z 0-9 _ ยาว 2-32 ตัว" };
+  const r = await fetch(src, { signal: AbortSignal.timeout(10000) });
+  if (!r.ok) return { content: `โหลดรูปไม่ได้ (${r.status})` };
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (buf.length > 256 * 1024) return { content: `รูปใหญ่ ${Math.round(buf.length / 1024)} KB เกิน 256 KB ลองย่อรูปก่อน` };
+  const type = animated ? "image/gif" : (r.headers.get("content-type") || "image/png").split(";")[0];
+  try {
+    const e = await discordApi(`/applications/${DISCORD_APP_ID}/emojis`, "POST", { name, image: `data:${type};base64,${buf.toString("base64")}` });
+    emojiCache.delete("app");
+    return { content: `✅ เพิ่มอีโมจิ ${emojiTag(e)} แล้ว\nใช้ใน /update ได้เลยด้วย \`:${e.name}:\` (ช่อง emoji, reactions หรือในข้อความฟอร์ม) ใช้ได้ทุกเซิร์ฟที่บอทอยู่` };
+  } catch (err) {
+    if (/APPLICATION_EMOJI_NAME_ALREADY_TAKEN|already/i.test(err.message)) return { content: `มีอีโมจิชื่อ \`${name}\` อยู่แล้ว ลองชื่ออื่น` };
+    return { content: `เพิ่มไม่สำเร็จ: ${String(err.message).slice(0, 200)}` };
+  }
+}
+
 async function handleUpdateModal(res, body, id) {
   const d = updDrafts.get(id);
   if (!d) return send(res, 200, { type: 4, data: { flags: 64, content: "ฟอร์มหมดเวลาแล้ว ใช้ /update ใหม่อีกครั้ง" } });
@@ -2967,16 +3023,20 @@ async function handleUpdateModal(res, body, id) {
   d.at = Date.now();
   d.rawFields = { ...d.fields };
   const emojis = await guildEmojis(d.guild);
-  for (const k of Object.keys(d.fields)) d.fields[k] = resolveEmojiText(d.fields[k], emojis);
-  d.emoji = d.emojiRaw ? resolveEmojiText(d.emojiRaw, emojis) : "";
-  d.reacts = d.reactRaw ? parseReactions(d.reactRaw, emojis) : null;
+  const missing = new Set();
+  for (const k of Object.keys(d.fields)) d.fields[k] = resolveEmojiText(d.fields[k], emojis, missing);
+  d.emoji = d.emojiRaw ? resolveEmojiText(d.emojiRaw, emojis, missing) : "";
+  if (d.emoji && missing.size && /^:[\w~]+:$/.test(d.emoji)) d.emoji = "";
+  d.reacts = d.reactRaw ? parseReactions(d.reactRaw, emojis, missing) : null;
   if (d.reactRaw && !d.reacts.length) d.reacts = null;
   const log = await quickUpdLog();
-  let note = "";
+  let note = missing.size
+    ? `-# ⚠️ ไม่เจออีโมจิ ${[...missing].slice(0, 8).map((n) => `\`:${n}:\``).join(" ")} — บอทใช้ได้แค่อีโมจิของเซิร์ฟนี้ หรืออีโมจิที่เพิ่มด้วย /addemoji`
+    : "";
   if (!d.version) {
     const prev = log.filter((e) => (e.gd || DISCORD_GUILD_ID) === d.guild && e.g === d.game).pop();
     d.version = bumpVersion(prev && prev.v);
-    note = prev ? `-# 🔢 เวอร์ชันนับต่อให้อัตโนมัติจาก ${prev.v}` : "-# 🔢 ไม่ได้ใส่เวอร์ชัน เลยตั้งเป็น v1.0";
+    note = (note ? `${note}\n` : "") + (prev ? `-# 🔢 เวอร์ชันนับต่อให้อัตโนมัติจาก ${prev.v}` : "-# 🔢 ไม่ได้ใส่เวอร์ชัน เลยตั้งเป็น v1.0");
   }
   d.no = (log.length ? Math.max(...log.map((e) => e.n || 0)) : 0) + 1;
   // A modal opened from the preview's Edit button updates that preview in place.
@@ -3200,7 +3260,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "update-post-3" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "update-post-4" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
