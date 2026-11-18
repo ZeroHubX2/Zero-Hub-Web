@@ -216,6 +216,12 @@ const commands = [
       { type: STRING, name: "link", description: "หรือลิงก์อีโมจิ (คลิกขวาอีโมจิ > คัดลอกลิงก์) / <:ชื่อ:ไอดี>", max_length: 300 },
     ],
   },
+  {
+    name: "website",
+    description: "โพสต์การ์ดเว็บไซต์ Zero Hub Shop ในห้องนี้ (แอดมิน)",
+    default_member_permissions: ADMIN,
+    dm_permission: false,
+  },
 ];
 
 fetch(`https://discord.com/api/v10/applications/${APP_ID}/guilds/${GUILD_ID}/commands`, {

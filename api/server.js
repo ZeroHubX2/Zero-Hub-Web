@@ -2380,6 +2380,7 @@ async function handleInteraction(req, res) {
   const name = body.data && body.data.name;
   if (name === "panel") return handlePanelCommand(res, body);
   if (name === "update") return handleUpdateCommand(res, body);
+  if (name === "website") return handleWebsiteCommand(res, body);
   if (name === "addemoji") {
     if (!discordIsAdmin(body.member)) return send(res, 200, { type: 4, data: { flags: 64, content: "คำสั่งนี้สำหรับแอดมินเท่านั้น" } });
     return deferred(res, body, () => addAppEmoji(optionsOf(body.data), (body.data && body.data.resolved) || {}), "addemoji");
@@ -3166,6 +3167,124 @@ async function handleUpdateButton(res, body, id) {
   send(res, 200, { type: 4, data: { flags: 64, content: "ไม่รู้จักปุ่มนี้" } });
 }
 
+// ───────────── /website: website card for the #zero-hub-website channel ─────────────
+// Shows every page of the shop as a row with its own button, live prices and shop stats.
+// Posted cards are remembered (shop_meta.webposts) and refreshed when prices or stats change.
+async function websiteMessage(given) {
+  let tiers = (given && given.tiers) || [];
+  let stats = (given && given.stats) || null;
+  if (!given) {
+    const late = (p, v) => Promise.race([p, new Promise((r) => setTimeout(() => r(v), 1200))]).catch(() => v);
+    [tiers, stats] = await Promise.all([late(getTiers(), []), late(getStats(), null)]);
+  }
+  const host = SHOP_URL.replace(/^https?:\/\//, "");
+  const page = (emoji, title, desc, label, url) => ({
+    type: 9,
+    components: [text(`${emoji} **${title}**\n-# ${desc}`)],
+    accessory: url.startsWith("zh:") ? btn(label, emoji, 2, url) : btn(label, emoji, 5, url),
+  });
+  const prices = tiers.length
+    ? tiers.map((t) => `${TIER_ICONS[t.id] || "🔑"} ${t.name} ${onSale(t) ? `~~${t.price}~~ ` : ""}**\`${unitPrice(t)}฿\`**${onSale(t) ? " 🔥" : ""}`).join("  ·  ")
+    : "ดูราคาได้ที่หน้าร้านค้า";
+  const statLine = stats
+    ? `👥 สมาชิก **${stats.members.toLocaleString("en-US")}** คน · 🔑 ขายแล้ว **${stats.sold.toLocaleString("en-US")}** คีย์ · ✅ ใช้งานอยู่ **${stats.active.toLocaleString("en-US")}** · 🎮 **${stats.games || PANEL_GAMES.length}** เกม`
+    : `🎮 รองรับ **${PANEL_GAMES.length}** เกม · คีย์เดียวใช้ได้ทุกเกม`;
+  return {
+    flags: 1 << 15,
+    components: [
+      {
+        type: 17,
+        accent_color: PANEL_COLOR,
+        components: [
+          {
+            type: 9,
+            components: [
+              text("-# 🌐 OFFICIAL WEBSITE · เว็บไซต์ทางการ"),
+              text("# ZERO HUB SHOP"),
+              text(`ร้านคีย์สคริปต์ Roblox ของ Zero Hub · Official key store\n-# ⚡ ได้คีย์ทันที 24 ชม. · 🔐 ล็อกอินด้วย Discord ได้ · 🇹🇭 / 🇬🇧 สองภาษา`),
+            ],
+            accessory: { type: 11, media: { url: `${PUBLIC_URL}/assets/panel-logo.png?v=2` } },
+          },
+          { type: 12, items: [{ media: { url: `${SHOP_URL}/og.jpg` }, description: "Zero Hub Shop" }] },
+          line(true),
+          text("### 🧭 เมนูในเว็บ · What you can do"),
+          page("🛒", "ซื้อคีย์ · Buy Keys", "เลือกแพ็กเกจ ใส่โค้ดส่วนลดได้ ได้คีย์ทันทีหลังจ่าย", "ร้านค้า", `${SHOP_URL}/shop`),
+          page("💰", "เติมเงิน · Top up", "ซองอั่งเปา TrueMoney หรือโอนธนาคาร + แนบสลิป ตรวจอัตโนมัติ", "เติมเงิน", `${SHOP_URL}/topup`),
+          page("🔑", "คีย์ของฉัน · My Keys", "ดูวันหมดอายุ · รีเซ็ต HWID ย้ายเครื่อง · ประวัติการซื้อ", "คีย์ของฉัน", `${SHOP_URL}/account`),
+          page("🎁", "คีย์ฟรี · Free Key", "ผ่าน 2 ด่าน รับคีย์ฟรี 6 ชม. เล่นได้ครบทุกฟีเจอร์", "รับคีย์ฟรี", `${SHOP_URL}/getkey`),
+          page("📖", "วิธีใช้ · How to use", "สอนตั้งแต่สมัคร เติมเงิน ซื้อคีย์ จนรันสคริปต์ในเกม", "วิธีใช้", `${SHOP_URL}/howto`),
+          page("📜", "รับสคริปต์ · Get Script", "ตัวโหลดเดียว ใช้ได้ทุกเกม · กดแล้วได้สคริปต์ (เห็นแค่คุณ)", "รับสคริปต์", "zh:script"),
+          line(),
+          text(`### 💳 ราคาคีย์ · Key Plans\n${prices}\n-# ⏱️ เวลาเริ่มนับตอนใส่คีย์ครั้งแรก · Time starts on first use`),
+          line(),
+          text(`${statLine}\n-# 📊 ตัวเลขบนการ์ดนี้อัปเดตอัตโนมัติ · Live stats`),
+          row(btn("เปิดเว็บไซต์ · Open Website", "🌐", 5, SHOP_URL), btn("สมัคร / เข้าสู่ระบบ", "👤", 5, `${SHOP_URL}/login`)),
+          text(`-# 🔗 ${host} · 🇹🇭 / 🇬🇧 สลับภาษาได้ที่มุมบนของเว็บ · Switch language at the top of the site`),
+        ],
+      },
+    ],
+  };
+}
+
+async function handleWebsiteCommand(res, body) {
+  if (!discordIsAdmin(body.member)) return send(res, 200, { type: 4, data: { flags: 64, content: "คำสั่งนี้สำหรับแอดมินเท่านั้น" } });
+  const msg = await websiteMessage();
+  try {
+    const posted = await Promise.race([discordApi(`/channels/${body.channel_id}/messages`, "POST", msg), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2000))]);
+    if (posted && posted.id) rememberWebPost(posted.channel_id || body.channel_id, posted.id).catch((err) => console.error("remember webpost:", err.message));
+    return send(res, 200, { type: 4, data: { flags: 64, content: "โพสต์การ์ดเว็บไซต์แล้ว ✅ (ราคา / ยอดสมาชิกบนการ์ดจะอัปเดตเอง)" } });
+  } catch (err) {
+    console.error("website post failed:", err.message);
+    if (/discord 403/.test(err.message)) return send(res, 200, { type: 4, data: { flags: 64, content: "โพสต์ไม่สำเร็จ ให้บอทมีสิทธิ์ ดูช่อง / ส่งข้อความ / ฝังลิงก์ ในห้องนี้ แล้วลองใหม่" } });
+    return send(res, 200, { type: 4, data: msg });
+  }
+}
+
+let webSig = null;
+async function getWebPosts() {
+  const [meta] = await db("shop_meta?select=v&k=eq.webposts");
+  try {
+    const list = JSON.parse(meta ? meta.v : "[]");
+    return Array.isArray(list) ? list.filter((x) => x && /^\d+$/.test(x.c) && /^\d+$/.test(x.m)) : [];
+  } catch {
+    return [];
+  }
+}
+async function saveWebPosts(list) {
+  await db("shop_meta", { method: "POST", body: { k: "webposts", v: JSON.stringify(list.slice(-10)) }, prefer: "resolution=merge-duplicates" });
+}
+async function rememberWebPost(c, m) {
+  const list = (await getWebPosts()).filter((x) => x.m !== String(m));
+  list.push({ c: String(c), m: String(m) });
+  await saveWebPosts(list);
+  webSig = null;
+}
+async function refreshWebPosts() {
+  if (!DISCORD_BOT_TOKEN || !SUPABASE_URL) return;
+  const [tiers, stats] = await Promise.all([getTiers(), getStats()]);
+  const sig = JSON.stringify([tiers.map((t) => [t.id, t.name, t.price, unitPrice(t), onSale(t)]), stats]);
+  if (sig === webSig) return;
+  const list = await getWebPosts();
+  if (!list.length) {
+    webSig = sig;
+    return;
+  }
+  const msg = await websiteMessage({ tiers, stats });
+  const keep = [];
+  for (const p of list) {
+    try {
+      await discordApi(`/channels/${p.c}/messages/${p.m}`, "PATCH", { components: msg.components, flags: msg.flags });
+      keep.push(p);
+    } catch (err) {
+      if (/discord 404/.test(err.message)) continue;
+      keep.push(p);
+      console.error("webpost refresh failed:", p.m, err.message);
+    }
+  }
+  if (keep.length !== list.length) await saveWebPosts(keep);
+  webSig = sig;
+}
+
 const BOOTED_AT = Date.now();
 let presenceIdx = 0;
 async function presenceData() {
@@ -3260,7 +3379,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "update-post-4" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "website-card-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
@@ -3307,4 +3426,5 @@ http
     setInterval(() => sweepBuyerRoles().catch(() => {}), 15 * 60 * 1000).unref();
     setInterval(() => dailySummaryTick().catch((err) => console.error("daily summary:", err.message)), 5 * 60 * 1000).unref();
     setInterval(() => refreshPanels().catch((err) => console.error("panel refresh:", err.message)), 2 * 60 * 1000).unref();
+    setInterval(() => refreshWebPosts().catch((err) => console.error("webpost refresh:", err.message)), 5 * 60 * 1000).unref();
   });
