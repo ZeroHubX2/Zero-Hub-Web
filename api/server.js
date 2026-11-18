@@ -2770,6 +2770,49 @@ function updBullets(raw, limit = 1400) {
   return out;
 }
 
+// Custom emoji: ":name:" typed anywhere is swapped for that server emoji; reactions accept unicode, <:name:id> or :name:.
+const emojiCache = new Map();
+async function guildEmojis(gid) {
+  const c = emojiCache.get(gid);
+  if (c && Date.now() - c.at < 10 * 60 * 1000) return c.list;
+  let list = c ? c.list : [];
+  try {
+    list = await Promise.race([discordApi(`/guilds/${gid}/emojis`, "GET"), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 1500))]);
+    emojiCache.set(gid, { at: Date.now(), list });
+  } catch (err) {
+    console.error("guild emojis:", err.message);
+  }
+  return list || [];
+}
+function emojiTag(e) {
+  return `<${e.animated ? "a" : ""}:${e.name}:${e.id}>`;
+}
+function resolveEmojiText(str, list) {
+  if (!str || !list.length) return str || "";
+  return String(str).replace(/(<a?)?:([\w~]{2,32}):(\d+>)?/g, (m, pre, name, post) => {
+    if (pre || post) return m;
+    const e = list.find((x) => x.name === name) || list.find((x) => x.name.toLowerCase() === name.toLowerCase());
+    return e ? emojiTag(e) : m;
+  });
+}
+const DEFAULT_REACTIONS = ["🔥", "❤️", "👍", "🎉"];
+function parseReactions(str, list) {
+  const out = [];
+  for (const tok of String(str || "").match(/<a?:\w+:\d+>|:[\w~]{2,32}:|[^\s,:<>]+/g) || []) {
+    let m = tok.match(/^<a?:(\w+):(\d+)>$/);
+    if (m) out.push({ api: `${m[1]}:${m[2]}`, show: tok });
+    else if ((m = tok.match(/^:([\w~]+):$/))) {
+      const e = list.find((x) => x.name === m[1]) || list.find((x) => x.name.toLowerCase() === m[1].toLowerCase());
+      if (e) out.push({ api: `${e.name}:${e.id}`, show: emojiTag(e) });
+    } else if (/\p{Extended_Pictographic}|\p{Regional_Indicator}|⃣/u.test(tok)) {
+      for (const g of [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(tok)].map((x) => x.segment)) {
+        if (/\p{Extended_Pictographic}|\p{Regional_Indicator}|⃣/u.test(g)) out.push({ api: g, show: g });
+      }
+    }
+  }
+  return out.slice(0, 10);
+}
+
 function updGame(id) {
   return UPDATE_GAMES.find((g) => g.id === id) || UPDATE_GAMES[0];
 }
@@ -2805,7 +2848,7 @@ function updateMessage(d, imageRef) {
       type: 9,
       components: [
         text(`-# 📢 ZERO HUB · UPDATE LOG${d.no ? ` · #${d.no}` : ""}`),
-        text(`## ${g.e} ${g.n} - อัปเดต [${d.version}]`),
+        text(`## ${d.emoji || g.e} ${g.n} - อัปเดต [${d.version}]`),
         text(`${ty.e} **${ty.th}** · ${st.e} ${st.th}\n-# 📅 <t:${ts}:D> · <t:${ts}:R>${ping ? `\n${ping}` : ""}`),
       ],
       accessory: { type: 11, media: { url: `${PUBLIC_URL}/assets/panel-logo.png?v=2` } },
@@ -2840,7 +2883,7 @@ function updatePreview(id, d, note) {
   const { container } = updateMessage(d);
   const where = `<#${d.channel}>`;
   const who = d.silent || !d.role ? "ไม่แท็กใคร" : d.role === d.guild ? "@everyone" : `<@&${d.role}>`;
-  const extras = [d.thread && "💬 เปิดเธรดคุย", d.react && "😀 ใส่รีแอค", "📣 กด Publish อัตโนมัติ (ถ้าเป็นห้องประกาศ)"].filter(Boolean).join(" · ");
+  const extras = [d.thread && "💬 เปิดเธรดคุย", d.react && `รีแอค ${(d.reacts && d.reacts.length ? d.reacts : DEFAULT_REACTIONS.map((e) => ({ show: e }))).map((r) => r.show).join(" ")}`, "📣 กด Publish อัตโนมัติ (ถ้าเป็นห้องประกาศ)"].filter(Boolean).join(" · ");
   return {
     flags: 64 | (1 << 15),
     allowed_mentions: { parse: [] },
@@ -2861,7 +2904,7 @@ function updateModal(id, d) {
       title: `${g.e} ${g.n}`.slice(0, 45),
       components: UPDATE_FIELDS.map((f) => {
         const input = { type: 4, custom_id: f.id, label: f.label, style: f.style, required: false, max_length: f.max, placeholder: f.ph.slice(0, 100) };
-        const v = d.fields && d.fields[f.id];
+        const v = (d.rawFields || d.fields || {})[f.id];
         if (v) input.value = String(v).slice(0, f.max);
         return { type: 1, components: [input] };
       }),
@@ -2902,6 +2945,8 @@ function handleUpdateCommand(res, body) {
     chanType: chan ? chan.type : 0,
     thread: !!o.thread,
     react: o.react !== false,
+    emojiRaw: String(o.emoji || "").trim().slice(0, 100),
+    reactRaw: String(o.reactions || "").trim().slice(0, 300),
     image,
     fields: {},
   };
@@ -2920,6 +2965,12 @@ async function handleUpdateModal(res, body, id) {
   const v = modalValues(body);
   d.fields = { intro: v.intro || "", new: v.new || "", fix: v.fix || "", chg: v.chg || "", note: v.note || "" };
   d.at = Date.now();
+  d.rawFields = { ...d.fields };
+  const emojis = await guildEmojis(d.guild);
+  for (const k of Object.keys(d.fields)) d.fields[k] = resolveEmojiText(d.fields[k], emojis);
+  d.emoji = d.emojiRaw ? resolveEmojiText(d.emojiRaw, emojis) : "";
+  d.reacts = d.reactRaw ? parseReactions(d.reactRaw, emojis) : null;
+  if (d.reactRaw && !d.reacts.length) d.reacts = null;
   const log = await quickUpdLog();
   let note = "";
   if (!d.version) {
@@ -2981,7 +3032,7 @@ async function postUpdate(id, d) {
       );
     }
     if (d.react) {
-      for (const e of ["🔥", "❤️", "👍", "🎉"]) {
+      for (const e of d.reacts ? d.reacts.map((r) => r.api) : DEFAULT_REACTIONS) {
         await discordApi(`/channels/${d.channel}/messages/${posted.id}/reactions/${encodeURIComponent(e)}/@me`, "PUT").catch(() => {});
         await new Promise((r) => setTimeout(r, 400));
       }
@@ -3149,7 +3200,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "update-post-2" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "update-post-3" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);

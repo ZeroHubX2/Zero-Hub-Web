@@ -200,6 +200,8 @@ const commands = [
       { type: CHANNEL, name: "channel", description: "ห้องที่จะโพสต์ (ไม่ใส่ = ห้องนี้)", channel_types: [0, 5] },
       { type: BOOLEAN, name: "thread", description: "เปิดเธรดให้คนคุยใต้โพสต์" },
       { type: BOOLEAN, name: "react", description: "ให้บอทใส่รีแอค 🔥❤️👍🎉 (ค่าเริ่มต้น = ใส่)" },
+      { type: STRING, name: "emoji", description: "อีโมจิหน้าชื่อเกม เช่น 🔥 หรือ :ชื่ออีโมจิเซิร์ฟ: (ไม่ใส่ = ของเกม)", max_length: 100 },
+      { type: STRING, name: "reactions", description: "รีแอคที่บอทจะใส่ เช่น 🔥 ❤️ :zero: (สูงสุด 10)", max_length: 300 },
       { type: BOOLEAN, name: "copy_last", description: "ดึงข้อความจากอัปเดตครั้งก่อนของเกมนี้มาแก้ต่อ" },
     ],
   },
