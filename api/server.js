@@ -2379,6 +2379,7 @@ async function handleInteraction(req, res) {
   if (body.type !== 2) return send(res, 400, { error: "unsupported" });
   const name = body.data && body.data.name;
   if (name === "panel") return handlePanelCommand(res, body);
+  if (name === "update") return handleUpdateCommand(res, body);
   await deferred(res, body, () => runCommand(name, optionsOf(body.data), body.member, body.user, langOf(body)), name);
 }
 
@@ -2574,6 +2575,7 @@ async function refreshPanels(force) {
 async function handlePanelButton(res, body) {
   const id = body.data && body.data.custom_id;
   const L = langOf(body);
+  if (id && id.startsWith("zh:upd:")) return handleUpdateButton(res, body, id);
   if (id === "zh:redeem") return send(res, 200, keyModal("zh:redeem_modal", T(L, "แลกคีย์", "Redeem Key"), true, L));
   if (id === "zh:reset") return send(res, 200, keyModal("zh:reset_modal", T(L, "ย้ายเครื่อง (รีเซ็ต HWID)", "Reset HWID"), false, L));
   if (id === "zh:script") {
@@ -2665,6 +2667,7 @@ function modalValue(body) {
 
 async function handlePanelModal(res, body) {
   const id = body.data && body.data.custom_id;
+  if (id && id.startsWith("zh:updm:")) return handleUpdateModal(res, body, id.slice(8));
   const key = modalValue(body);
   const L = langOf(body);
   if (id === "zh:redeem_modal") return deferred(res, body, () => runCommand("redeem", { key }, body.member, body.user, L), "panel-redeem");
@@ -2672,6 +2675,382 @@ async function handlePanelModal(res, body) {
     return deferred(res, body, () => runCommand("resethwid", key ? { key } : {}, body.member, body.user, L), "panel-reset");
   }
   send(res, 200, { type: 4, data: { flags: 64, content: T(L, "ไม่รู้จักฟอร์มนี้", "Unknown form") } });
+}
+
+// ───────────── /update: pretty update announcements (Components V2) ─────────────
+// Flow: /update (options) → modal (changelog text) → private preview with Post / Edit / Cancel → post to channel.
+// History lives in shop_meta.updates (last 100) for auto version bump and the public "History" button.
+const DISCORD_UPDATE_ROLE_ID = env("DISCORD_UPDATE_ROLE_ID");
+const UPDATE_GAMES = [
+  { id: "all", e: "🌐", n: "Zero Hub (ทุกเกม)" },
+  { id: "egg", e: "🥚", n: "Break and Steal an Egg" },
+  { id: "animezero", e: "⚡", n: "Anime Zero" },
+  { id: "astd", e: "🏰", n: "All Star Tower Defense" },
+  { id: "sta", e: "☣️", n: "Survive the Apocalypse" },
+  { id: "animeeyes", e: "👁️", n: "Anime Eyes" },
+  { id: "aotr", e: "⚔️", n: "Attack on Titan Revolution" },
+  { id: "venom", e: "🕷️", n: "Venom Evolution" },
+  { id: "throwfood", e: "🍖", n: "Throw Food For Animals" },
+];
+const UPDATE_TYPES = {
+  major: { e: "🚀", th: "อัปเดตใหญ่", en: "Major Update", color: 0x8b5cf6 },
+  feature: { e: "✨", th: "ฟีเจอร์ใหม่", en: "New Features", color: 0x22c55e },
+  fix: { e: "🔧", th: "แก้ไขบัค", en: "Bug Fixes", color: 0xf59e0b },
+  hotfix: { e: "🩹", th: "แก้ด่วน", en: "Hotfix", color: 0xef4444 },
+  newgame: { e: "🎉", th: "เกมใหม่", en: "New Game", color: 0xff2a4b },
+  maint: { e: "🛠️", th: "ปิดปรับปรุง", en: "Maintenance", color: 0x64748b },
+};
+const UPDATE_STATUS = {
+  ok: { e: "🟢", th: "ใช้งานได้ปกติ", en: "Working" },
+  partial: { e: "🟡", th: "ใช้ได้บางส่วน", en: "Partial" },
+  down: { e: "🔴", th: "ใช้งานไม่ได้ชั่วคราว", en: "Down" },
+  test: { e: "🧪", th: "กำลังทดสอบ", en: "Testing" },
+};
+const UPDATE_FIELDS = [
+  { id: "intro", label: "📢 ข้อความเปิด (ไม่ใส่ก็ได้)", ph: "เช่น อัปเดตรอบนี้เน้นฟาร์มเร็วขึ้น 2 เท่า!", style: 2, max: 600 },
+  { id: "new", label: "✨ ฟีเจอร์ใหม่ (บรรทัดละ 1 ข้อ)", ph: "Auto Farm Boss\nAuto Join Portal\n  ขึ้นต้นด้วยเว้นวรรค 2 ช่อง = ข้อย่อย", style: 2, max: 1500 },
+  { id: "fix", label: "🔧 แก้ไขบัค (บรรทัดละ 1 ข้อ)", ph: "แก้บัค Auto Megumin ไม่ทำงาน\nแก้บัค UI Cursed กดแล้วเมนูไม่ขึ้น", style: 2, max: 1500 },
+  { id: "chg", label: "⚙️ ปรับปรุง / เปลี่ยนแปลง", ph: "ปรับความเร็ว Auto Farm\nย้ายปุ่ม Teleport ไปแท็บ Misc", style: 2, max: 1500 },
+  { id: "note", label: "📝 หมายเหตุท้ายโพสต์ (ไม่ใส่ก็ได้)", ph: "เช่น ถ้าเจอบัคแจ้งในห้อง #report ได้เลย", style: 2, max: 400 },
+];
+
+const updDrafts = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, d] of updDrafts) if (now - d.at > 60 * 60 * 1000) updDrafts.delete(k);
+}, 10 * 60 * 1000).unref();
+
+let updLog = null;
+async function loadUpdLog() {
+  if (updLog) return updLog;
+  const [meta] = await db("shop_meta?select=v&k=eq.updates");
+  try {
+    const list = JSON.parse(meta ? meta.v : "[]");
+    updLog = Array.isArray(list) ? list : [];
+  } catch {
+    updLog = [];
+  }
+  return updLog;
+}
+async function quickUpdLog() {
+  try {
+    return await Promise.race([loadUpdLog(), new Promise((r) => setTimeout(() => r(updLog || []), 1500))]);
+  } catch {
+    return updLog || [];
+  }
+}
+async function saveUpdLog(list) {
+  updLog = list.slice(-100);
+  await db("shop_meta", { method: "POST", body: { k: "updates", v: JSON.stringify(updLog) }, prefer: "resolution=merge-duplicates" });
+}
+
+function bumpVersion(v) {
+  const s = String(v || "").trim();
+  if (!s) return "v1.0";
+  const m = s.match(/^(.*?)(\d+)(\D*)$/);
+  return m ? `${m[1]}${Number(m[2]) + 1}${m[3]}` : `${s}.1`;
+}
+
+function updBullets(raw, limit = 1400) {
+  const out = [];
+  let len = 0;
+  for (const l of String(raw || "").split(/\r?\n/)) {
+    if (!l.trim()) continue;
+    const sub = /^(\s{2,}|\t|>)/.test(l);
+    const t = l.replace(/^\s*>?\s*(?:[-*•●▪·]|\d+[.)])?\s*/, "").trim();
+    if (!t) continue;
+    const item = `${sub ? "  - " : "- "}${t}`;
+    if (len + item.length > limit) {
+      out.push("- …");
+      break;
+    }
+    out.push(item);
+    len += item.length + 1;
+  }
+  return out;
+}
+
+function updGame(id) {
+  return UPDATE_GAMES.find((g) => g.id === id) || UPDATE_GAMES[0];
+}
+function updImageUrl(d) {
+  if (d.image) return d.image.url;
+  if (d.game === "all") return `${PUBLIC_URL}/assets/panel-banner.gif?v=4`;
+  return `${SHOP_URL}/games/${d.game}.webp`;
+}
+function updLink(e) {
+  return `https://discord.com/channels/${DISCORD_GUILD_ID}/${e.c}/${e.m}`;
+}
+
+// The announcement itself. `imageRef` overrides the gallery URL (attachment://… when the image is re-uploaded).
+function updateMessage(d, imageRef) {
+  const g = updGame(d.game);
+  const ty = UPDATE_TYPES[d.type] || UPDATE_TYPES.feature;
+  const st = UPDATE_STATUS[d.status] || UPDATE_STATUS.ok;
+  const f = d.fields || {};
+  const lists = [
+    ["new", "✨ ฟีเจอร์ใหม่ · New Features"],
+    ["fix", "🔧 แก้ไขบัค · Bug Fixes"],
+    ["chg", "⚙️ ปรับปรุง · Changes"],
+  ]
+    .map(([k, title]) => [k, title, updBullets(f[k])])
+    .filter(([, , items]) => items.length);
+  const counts = { new: 0, fix: 0, chg: 0 };
+  for (const [k, , items] of lists) counts[k] = items.filter((x) => x.startsWith("- ")).length;
+  const ts = Math.floor((d.postedAt || Date.now()) / 1000);
+  const ping = d.silent || !d.role ? "" : d.role === DISCORD_GUILD_ID ? "@everyone" : `<@&${d.role}>`;
+
+  const parts = [
+    {
+      type: 9,
+      components: [
+        text(`-# 📢 ZERO HUB · UPDATE LOG${d.no ? ` · #${d.no}` : ""}`),
+        text(`## ${g.e} ${g.n} - อัปเดต [${d.version}]`),
+        text(`${ty.e} **${ty.th}** · ${st.e} ${st.th}\n-# 📅 <t:${ts}:D> · <t:${ts}:R>${ping ? `\n${ping}` : ""}`),
+      ],
+      accessory: { type: 11, media: { url: `${PUBLIC_URL}/assets/panel-logo.png?v=2` } },
+    },
+  ];
+  if (f.intro && f.intro.trim()) parts.push(text(`>>> ${f.intro.trim().slice(0, 600)}`));
+  parts.push(line(true));
+  if (!lists.length) parts.push(text("-# (ไม่มีรายการเปลี่ยนแปลง)"));
+  lists.forEach(([, title, items], i) => {
+    if (i) parts.push(line());
+    parts.push(text(`### ${title}\n${items.join("\n")}`));
+  });
+  parts.push({ type: 12, items: [{ media: { url: imageRef || updImageUrl(d) }, description: `${g.n} ${d.version}` }] });
+  const stat = [counts.new && `✨ ${counts.new} ฟีเจอร์`, counts.fix && `🔧 ${counts.fix} แก้บัค`, counts.chg && `⚙️ ${counts.chg} ปรับปรุง`].filter(Boolean);
+  const foot = [];
+  if (stat.length) foot.push(`📊 ${stat.join(" · ")}`);
+  if (f.note && f.note.trim()) foot.push(`📝 ${f.note.trim().slice(0, 400).replace(/\n+/g, " ")}`);
+  foot.push(`✍️ โพสต์โดย <@${d.uid}> · 🔑 คีย์เดียวใช้ได้ทุกเกม`);
+  parts.push(text(foot.map((x) => `-# ${x}`).join("\n")));
+  const buttons = [btn("รับสคริปต์ · Script", "📜", 3, "zh:script"), btn("ประวัติอัปเดต · History", "🗂️", 2, `zh:upd:h:${g.id}`)];
+  if (DISCORD_UPDATE_ROLE_ID) buttons.push(btn("รับแจ้งเตือน · Notify", "🔔", 2, "zh:upd:bell"));
+  parts.push(row(...buttons));
+  parts.push(row(btn("ซื้อคีย์ · Buy", "🛒", 5, `${SHOP_URL}/shop`), btn("คีย์ฟรี · Free Key", "🎁", 5, `${SHOP_URL}/getkey`)));
+  return {
+    container: { type: 17, accent_color: ty.color, components: parts },
+    ping,
+    counts,
+  };
+}
+
+function updatePreview(id, d, note) {
+  const { container } = updateMessage(d);
+  const where = `<#${d.channel}>`;
+  const who = d.silent || !d.role ? "ไม่แท็กใคร" : d.role === DISCORD_GUILD_ID ? "@everyone" : `<@&${d.role}>`;
+  const extras = [d.thread && "💬 เปิดเธรดคุย", d.react && "😀 ใส่รีแอค", "📣 กด Publish อัตโนมัติ (ถ้าเป็นห้องประกาศ)"].filter(Boolean).join(" · ");
+  return {
+    flags: 64 | (1 << 15),
+    allowed_mentions: { parse: [] },
+    components: [
+      text(`### 👀 ตัวอย่างโพสต์ (ยังไม่ได้โพสต์)\nจะโพสต์ไปที่ ${where} · แท็ก ${who}\n-# ${extras}${note ? `\n${note}` : ""}`),
+      container,
+      row(btn("โพสต์เลย", "✅", 3, `zh:upd:post:${id}`), btn("แก้ไขข้อความ", "✏️", 1, `zh:upd:edit:${id}`), btn("ยกเลิก", "✖️", 4, `zh:upd:x:${id}`)),
+    ],
+  };
+}
+
+function updateModal(id, d) {
+  const g = updGame(d.game);
+  return {
+    type: 9,
+    data: {
+      custom_id: `zh:updm:${id}`,
+      title: `${g.e} ${g.n}`.slice(0, 45),
+      components: UPDATE_FIELDS.map((f) => {
+        const input = { type: 4, custom_id: f.id, label: f.label, style: f.style, required: false, max_length: f.max, placeholder: f.ph.slice(0, 100) };
+        const v = d.fields && d.fields[f.id];
+        if (v) input.value = String(v).slice(0, f.max);
+        return { type: 1, components: [input] };
+      }),
+    },
+  };
+}
+
+function modalValues(body) {
+  const out = {};
+  for (const r of (body.data && body.data.components) || []) for (const c of r.components || []) out[c.custom_id] = String(c.value || "");
+  return out;
+}
+
+function handleUpdateCommand(res, body) {
+  if (!discordIsAdmin(body.member)) return send(res, 200, { type: 4, data: { flags: 64, content: "คำสั่งนี้สำหรับแอดมินเท่านั้น" } });
+  const o = optionsOf(body.data);
+  const resolved = (body.data && body.data.resolved) || {};
+  let image = null;
+  if (o.image) {
+    const a = resolved.attachments && resolved.attachments[o.image];
+    if (!a || !/^image\//.test(a.content_type || "")) return send(res, 200, { type: 4, data: { flags: 64, content: "ไฟล์รูปต้องเป็นรูปภาพ (png / jpg / gif / webp)" } });
+    if (a.size > 10 * 1024 * 1024) return send(res, 200, { type: 4, data: { flags: 64, content: "รูปใหญ่เกิน 10 MB" } });
+    image = { url: a.url, name: String(a.filename || "update.png").replace(/[^\w.-]/g, "_"), type: a.content_type };
+  }
+  const chan = o.channel ? resolved.channels && resolved.channels[o.channel] : body.channel;
+  const uid = (body.member && body.member.user && body.member.user.id) || "";
+  const d = {
+    uid,
+    at: Date.now(),
+    game: o.game || "all",
+    type: o.type || "feature",
+    status: o.status || "ok",
+    version: String(o.version || "").trim().slice(0, 32),
+    role: o.ping || DISCORD_UPDATE_ROLE_ID || DISCORD_BUYER_ROLE_ID || "",
+    silent: !!o.silent,
+    channel: o.channel || body.channel_id,
+    chanType: chan ? chan.type : 0,
+    thread: !!o.thread,
+    react: o.react !== false,
+    image,
+    fields: {},
+  };
+  if (o.copy_last) {
+    const prev = (updLog || []).filter((e) => e.g === d.game && e.f).pop();
+    if (prev) d.fields = { ...prev.f };
+  }
+  const id = crypto.randomBytes(6).toString("hex");
+  updDrafts.set(id, d);
+  send(res, 200, updateModal(id, d));
+}
+
+async function handleUpdateModal(res, body, id) {
+  const d = updDrafts.get(id);
+  if (!d) return send(res, 200, { type: 4, data: { flags: 64, content: "ฟอร์มหมดเวลาแล้ว ใช้ /update ใหม่อีกครั้ง" } });
+  const v = modalValues(body);
+  d.fields = { intro: v.intro || "", new: v.new || "", fix: v.fix || "", chg: v.chg || "", note: v.note || "" };
+  d.at = Date.now();
+  const log = await quickUpdLog();
+  let note = "";
+  if (!d.version) {
+    const prev = log.filter((e) => e.g === d.game).pop();
+    d.version = bumpVersion(prev && prev.v);
+    note = prev ? `-# 🔢 เวอร์ชันนับต่อให้อัตโนมัติจาก ${prev.v}` : "-# 🔢 ไม่ได้ใส่เวอร์ชัน เลยตั้งเป็น v1.0";
+  }
+  d.no = (log.length ? Math.max(...log.map((e) => e.n || 0)) : 0) + 1;
+  // A modal opened from the preview's Edit button updates that preview in place.
+  send(res, 200, { type: body.message ? 7 : 4, data: updatePreview(id, d, note) });
+}
+
+async function fetchImage(img) {
+  try {
+    const r = await fetch(img.url, { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    return buf.length ? { buf, name: img.name, type: img.type } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function discordPostFile(path, payload, file) {
+  const fd = new FormData();
+  fd.append("payload_json", JSON.stringify({ ...payload, attachments: [{ id: 0, filename: file.name }] }));
+  fd.append("files[0]", new Blob([file.buf], { type: file.type }), file.name);
+  const r = await discordFetch(`${DISCORD_API}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}`, "X-Audit-Log-Reason": "ZeroHub update" },
+    body: fd,
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!r.ok) throw new Error(`discord ${r.status} ${await r.text()}`);
+  return r.json();
+}
+
+async function postUpdate(id, d) {
+  d.postedAt = Date.now();
+  const file = d.image ? await fetchImage(d.image) : null;
+  const { container, ping, counts } = updateMessage(d, file ? `attachment://${file.name}` : null);
+  const payload = {
+    flags: 1 << 15,
+    components: [container],
+    allowed_mentions: ping === "@everyone" ? { parse: ["everyone"] } : ping ? { roles: [d.role] } : { parse: [] },
+  };
+  const posted = file ? await discordPostFile(`/channels/${d.channel}/messages`, payload, file) : await discordApi(`/channels/${d.channel}/messages`, "POST", payload);
+  const g = updGame(d.game);
+  const log = [...(await loadUpdLog().catch(() => updLog || []))];
+  log.push({ n: d.no, g: d.game, v: d.version, ty: d.type, st: d.status, c: posted.channel_id || d.channel, m: posted.id, t: d.postedAt, by: d.uid, k: counts, f: d.fields });
+  await saveUpdLog(log).catch((err) => console.error("update log save:", err.message));
+  updDrafts.delete(id);
+  // Extras run after the reply; a failure in one never blocks the others.
+  (async () => {
+    if (d.chanType === 5) await discordApi(`/channels/${d.channel}/messages/${posted.id}/crosspost`, "POST").catch((err) => console.error("update crosspost:", err.message));
+    if (d.thread) {
+      await discordApi(`/channels/${d.channel}/messages/${posted.id}/threads`, "POST", { name: `💬 ${g.n} ${d.version}`.slice(0, 100), auto_archive_duration: 4320 }).catch((err) =>
+        console.error("update thread:", err.message)
+      );
+    }
+    if (d.react) {
+      for (const e of ["🔥", "❤️", "👍", "🎉"]) {
+        await discordApi(`/channels/${d.channel}/messages/${posted.id}/reactions/${encodeURIComponent(e)}/@me`, "PUT").catch(() => {});
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+  })();
+  return updLink({ c: posted.channel_id || d.channel, m: posted.id });
+}
+
+async function handleUpdateButton(res, body, id) {
+  const [, , act, arg] = id.split(":");
+  if (act === "h") {
+    const log = (await quickUpdLog()).filter((e) => arg === "all" || e.g === arg).slice(-10).reverse();
+    const g = updGame(arg);
+    const lines = log.map((e) => {
+      const ty = UPDATE_TYPES[e.ty] || UPDATE_TYPES.feature;
+      const k = e.k || {};
+      const bits = [k.new && `✨${k.new}`, k.fix && `🔧${k.fix}`, k.chg && `⚙️${k.chg}`].filter(Boolean).join(" ");
+      const gname = arg === "all" && e.g !== "all" ? ` ${updGame(e.g).e}` : "";
+      return `${ty.e}${gname} **${e.v}** · <t:${Math.floor(e.t / 1000)}:R> ${bits ? `· ${bits} ` : ""}· [ดูโพสต์](${updLink(e)})`;
+    });
+    return send(
+      res,
+      200,
+      ephemeralEmbed({
+        title: `🗂️ ประวัติอัปเดต · ${g.e} ${g.n}`,
+        description: lines.length ? `${lines.join("\n")}\n-# แสดง ${lines.length} ครั้งล่าสุด` : "ยังไม่มีประวัติอัปเดตของเกมนี้",
+      })
+    );
+  }
+  if (act === "bell") {
+    return deferred(
+      res,
+      body,
+      async () => {
+        const uid = body.member && body.member.user && body.member.user.id;
+        if (!uid || !DISCORD_UPDATE_ROLE_ID) return { content: "ปุ่มนี้ยังไม่เปิดใช้" };
+        const has = (body.member.roles || []).includes(DISCORD_UPDATE_ROLE_ID);
+        await discordApi(`/guilds/${DISCORD_GUILD_ID}/members/${uid}/roles/${DISCORD_UPDATE_ROLE_ID}`, has ? "DELETE" : "PUT");
+        return { content: has ? "🔕 ปิดการแจ้งเตือนอัปเดตแล้ว" : `🔔 เปิดการแจ้งเตือนแล้ว! จะได้รับแท็ก <@&${DISCORD_UPDATE_ROLE_ID}> ทุกครั้งที่มีอัปเดต` };
+      },
+      "update-bell"
+    );
+  }
+  if (!discordIsAdmin(body.member)) return send(res, 200, { type: 4, data: { flags: 64, content: "ปุ่มนี้สำหรับแอดมินเท่านั้น" } });
+  const d = updDrafts.get(arg);
+  if (!d) return send(res, 200, { type: 7, data: { components: [text("⌛ ตัวอย่างนี้หมดเวลาแล้ว ใช้ /update ใหม่อีกครั้ง")] } });
+  if (act === "edit") return send(res, 200, updateModal(arg, d));
+  if (act === "x") {
+    updDrafts.delete(arg);
+    return send(res, 200, { type: 7, data: { components: [text("✖️ ยกเลิกโพสต์อัปเดตแล้ว")] } });
+  }
+  if (act === "post") {
+    if (d.posting) return send(res, 200, { type: 6 });
+    d.posting = true;
+    send(res, 200, { type: 6 });
+    let done;
+    try {
+      const link = await postUpdate(arg, d);
+      done = [text(`### ✅ โพสต์อัปเดตแล้ว!\n${updGame(d.game).e} **${updGame(d.game).n} ${d.version}** → ${link}\n-# บอทกำลังใส่รีแอค / เปิดเธรด / Publish ให้ต่อ`)];
+    } catch (err) {
+      d.posting = false;
+      console.error("update post failed:", err.message);
+      const why = /discord 403/.test(err.message)
+        ? "บอทไม่มีสิทธิ์ในห้องนั้น (ต้องมี ดูช่อง / ส่งข้อความ / แนบไฟล์ / แท็กทุกคน ถ้าจะแท็กยศ)"
+        : `โพสต์ไม่สำเร็จ: ${String(err.message).slice(0, 180)}`;
+      done = [text(`### ⚠️ ${why}`), row(btn("ลองอีกครั้ง", "🔁", 3, `zh:upd:post:${arg}`), btn("ยกเลิก", "✖️", 4, `zh:upd:x:${arg}`))];
+    }
+    return finishInteraction(body.token, { components: done }).catch((err) => console.error("update followup:", err.message));
+  }
+  send(res, 200, { type: 4, data: { flags: 64, content: "ไม่รู้จักปุ่มนี้" } });
 }
 
 const BOOTED_AT = Date.now();
@@ -2768,7 +3147,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freelog-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "update-post-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
@@ -2810,6 +3189,7 @@ http
   .listen(PORT, () => {
     console.log(`ZeroHub API on :${PORT}`);
     startGateway();
+    setTimeout(() => loadUpdLog().catch(() => {}), 5000).unref();
     setTimeout(() => sweepBuyerRoles().catch(() => {}), 2 * 60 * 1000).unref();
     setInterval(() => sweepBuyerRoles().catch(() => {}), 15 * 60 * 1000).unref();
     setInterval(() => dailySummaryTick().catch((err) => console.error("daily summary:", err.message)), 5 * 60 * 1000).unref();

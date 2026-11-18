@@ -12,7 +12,38 @@ const INTEGER = 4;
 const BOOLEAN = 5;
 const USER = 6;
 const NUMBER = 10;
+const ROLE = 8;
+const CHANNEL = 7;
+const ATTACHMENT = 11;
 const ADMIN = "8";
+
+const GAMES = [
+  { name: "🌐 Zero Hub (ทุกเกม / Loader)", value: "all" },
+  { name: "🥚 Break and Steal an Egg", value: "egg" },
+  { name: "⚡ Anime Zero", value: "animezero" },
+  { name: "🏰 All Star Tower Defense", value: "astd" },
+  { name: "☣️ Survive the Apocalypse", value: "sta" },
+  { name: "👁️ Anime Eyes", value: "animeeyes" },
+  { name: "⚔️ Attack on Titan Revolution", value: "aotr" },
+  { name: "🕷️ Venom Evolution", value: "venom" },
+  { name: "🍖 Throw Food For Animals", value: "throwfood" },
+];
+
+const UPDATE_TYPES = [
+  { name: "🚀 อัปเดตใหญ่", value: "major" },
+  { name: "✨ ฟีเจอร์ใหม่", value: "feature" },
+  { name: "🔧 แก้ไขบัค", value: "fix" },
+  { name: "🩹 แก้ด่วน (Hotfix)", value: "hotfix" },
+  { name: "🎉 เกมใหม่", value: "newgame" },
+  { name: "🛠️ ปิดปรับปรุง", value: "maint" },
+];
+
+const UPDATE_STATUS = [
+  { name: "🟢 ใช้งานได้ปกติ", value: "ok" },
+  { name: "🟡 ใช้ได้บางส่วน", value: "partial" },
+  { name: "🔴 ใช้งานไม่ได้ชั่วคราว", value: "down" },
+  { name: "🧪 กำลังทดสอบ", value: "test" },
+];
 
 const TIERS = [
   { name: "1 วัน", value: "24h" },
@@ -152,6 +183,25 @@ const commands = [
     description: "โพสต์แผงคีย์ Zero Hub ในห้องนี้ (แอดมิน)",
     default_member_permissions: ADMIN,
     dm_permission: false,
+  },
+  {
+    name: "update",
+    description: "โพสต์ประกาศอัปเดตสคริปต์แบบสวยๆ (แอดมิน)",
+    default_member_permissions: ADMIN,
+    dm_permission: false,
+    options: [
+      { type: STRING, name: "game", description: "เกมที่อัปเดต", required: true, choices: GAMES },
+      { type: STRING, name: "version", description: "เวอร์ชัน เช่น v0.0.3.8 (ไม่ใส่ = นับต่อจากครั้งก่อนให้เอง)", max_length: 32 },
+      { type: STRING, name: "type", description: "ประเภทอัปเดต (สีแถบจะเปลี่ยนตาม)", choices: UPDATE_TYPES },
+      { type: STRING, name: "status", description: "สถานะสคริปต์ตอนนี้", choices: UPDATE_STATUS },
+      { type: ATTACHMENT, name: "image", description: "รูปประกอบ (ไม่ใส่ = ใช้รูปปกเกม)" },
+      { type: ROLE, name: "ping", description: "ยศที่จะแท็ก (ไม่ใส่ = ยศ Buyer)" },
+      { type: BOOLEAN, name: "silent", description: "ไม่แท็กใครเลย" },
+      { type: CHANNEL, name: "channel", description: "ห้องที่จะโพสต์ (ไม่ใส่ = ห้องนี้)", channel_types: [0, 5] },
+      { type: BOOLEAN, name: "thread", description: "เปิดเธรดให้คนคุยใต้โพสต์" },
+      { type: BOOLEAN, name: "react", description: "ให้บอทใส่รีแอค 🔥❤️👍🎉 (ค่าเริ่มต้น = ใส่)" },
+      { type: BOOLEAN, name: "copy_last", description: "ดึงข้อความจากอัปเดตครั้งก่อนของเกมนี้มาแก้ต่อ" },
+    ],
   },
 ];
 
