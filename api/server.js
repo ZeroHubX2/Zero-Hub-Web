@@ -703,6 +703,35 @@ async function linkFreeKey(k, who) {
   grantFreeRole(who.did).catch(() => {});
 }
 
+const FREE_LOG_CHANNEL_ID = env("FREE_LOG_CHANNEL_ID", "1572549286367854682");
+
+async function freeLog(k, who, tag, test = false) {
+  if (!FREE_LOG_CHANNEL_ID || !DISCORD_BOT_TOKEN) return null;
+  let today = null;
+  try {
+    const start = ymdStart(bkkYmd()).toISOString();
+    today = (await dbPage(`keys?select=id&source=eq.free&created_at=gte.${q(start)}`, 1, 1)).total;
+  } catch {}
+  const exp = Math.floor(new Date(k.expires_at).getTime() / 1000);
+  return discordApi(`/channels/${FREE_LOG_CHANNEL_ID}/messages`, "POST", {
+    allowed_mentions: { parse: [] },
+    embeds: [
+      {
+        title: test ? "🧪 ทดสอบ: มีคนรับคีย์ฟรี" : "🎁 มีคนรับคีย์ฟรี",
+        color: 0x2ecc71,
+        fields: [
+          { name: "ผู้ใช้", value: who.did ? `<@${who.did}>` : "ไม่ได้ล็อกอิน Discord" },
+          { name: "คีย์", value: `||${k.key}||`, inline: true },
+          { name: "หมดอายุ", value: `<t:${exp}:R>`, inline: true },
+          { name: "วันนี้แจกไปแล้ว", value: today === null ? "-" : `${today} คีย์`, inline: true },
+        ],
+        footer: { text: `IP ${String(tag || "-").slice(0, 8)} · ${FREE_HOURS} ชม.` },
+        timestamp: new Date().toISOString(),
+      },
+    ],
+  });
+}
+
 async function issueFreeKey(tag, who = {}) {
   const old = await activeFreeKey(tag, who.did);
   if (old) {
@@ -727,6 +756,7 @@ async function issueFreeKey(tag, who = {}) {
     },
   });
   if (who.did) grantFreeRole(who.did).catch(() => {});
+  freeLog(k, who, tag).catch((err) => console.error("free log failed:", err.message));
   return { key: k.key, expires_at: k.expires_at };
 }
 
@@ -1758,6 +1788,14 @@ async function handleAdmin(req, res, cors, path, url) {
     }
     return send(res, 200, { ok: true, topups: rows.map((r) => ({ ...r, user: who[r.user_id] })) }, cors);
   }
+  if (req.method === "POST" && path === "/api/admin/test-free-log") {
+    try {
+      await freeLog({ key: "ZHFREE-TEST-0000-0000", expires_at: new Date(Date.now() + FREE_HOURS * 3600e3).toISOString() }, {}, "test", true);
+      return send(res, 200, { ok: true }, cors);
+    } catch (err) {
+      return send(res, 200, { ok: false, error: err.message.slice(0, 200) }, cors);
+    }
+  }
   if (req.method === "POST" && path === "/api/admin/test-webhook") {
     if (!SALES_WEBHOOK_URL) return send(res, 400, { ok: false, error: "SALES_WEBHOOK_URL not set" }, cors);
     const r = await discordFetch(`${SALES_WEBHOOK_URL}${SALES_WEBHOOK_URL.includes("?") ? "&" : "?"}wait=true`, {
@@ -2730,7 +2768,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "lootlabs-back-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "freelog-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
