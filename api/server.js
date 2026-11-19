@@ -646,6 +646,19 @@ function lootUrlOf(m) {
   return null;
 }
 
+async function createLootLink(i) {
+  const m = await lootlabs("content_locker", {
+    title: `Zero Hub Key ${i + 1}/${FREE_STEPS}`,
+    url: `${SHOP_URL}/getkey?cp=${i + 1}`,
+    tier_id: Number(env("LOOTLABS_TIER", "3")) || 3,
+    number_of_tasks: Number(env("LOOTLABS_TASKS", "1")) || 1,
+    theme: Number(env("LOOTLABS_THEME", "1")) || 1,
+  });
+  const url = lootUrlOf(m);
+  if (!url) throw new Error(`lootlabs content_locker: no loot_url in ${JSON.stringify(m).slice(0, 300)}`);
+  return url;
+}
+
 async function getLootLinks() {
   if (lootLinks.length >= FREE_STEPS) return lootLinks.map(lootDomain);
   if (!lootLinksPending) {
@@ -657,16 +670,7 @@ async function getLootLinks() {
       } catch {}
       links = Array.isArray(links) ? links.filter((s) => typeof s === "string" && /^https?:\/\//.test(s)) : [];
       while (links.length < FREE_STEPS) {
-        const m = await lootlabs("content_locker", {
-          title: `Zero Hub Key ${links.length + 1}/${FREE_STEPS}`,
-          url: `${SHOP_URL}/getkey`,
-          tier_id: Number(env("LOOTLABS_TIER", "3")) || 3,
-          number_of_tasks: Number(env("LOOTLABS_TASKS", "1")) || 1,
-          theme: Number(env("LOOTLABS_THEME", "1")) || 1,
-        });
-        const url = lootUrlOf(m);
-        if (!url) throw new Error(`lootlabs content_locker: no loot_url in ${JSON.stringify(m).slice(0, 300)}`);
-        links.push(url);
+        links.push(await createLootLink(links.length));
         await db("shop_meta", { method: "POST", body: { k: "lootlabs_links", v: JSON.stringify(links) }, prefer: "resolution=merge-duplicates" });
       }
       lootLinks = links.map(lootDomain);
@@ -676,6 +680,124 @@ async function getLootLinks() {
     });
   }
   return lootLinksPending;
+}
+
+// Lootlabs sometimes kills a link (it then serves an empty 200 page and visitors get stuck on a white screen).
+// Every few minutes each checkpoint link is probed; a dead one is skipped for a working link right away and
+// replaced with a freshly created link, so a dead checkpoint fixes itself without anyone touching it.
+const LOOT_PROBE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+const LOOT_HEAL_GAP_MS = 60 * 60 * 1000;
+const lootHealth = new Map();
+const lootHealAt = [];
+const lootHealHist = [];
+const lootCapNotified = [];
+const lootHealLog = [];
+let lootCheckPending = null;
+let lootAllDownAt = 0;
+const freeStats = { since: new Date().toISOString(), start: 0, link: [], ok: [], fast: [], bad: [], fallback: 0, keys: 0 };
+const bump = (arr, i) => (arr[i] = (arr[i] || 0) + 1);
+const lootState = (u) => (lootHealth.get(u) || {}).state;
+
+async function lootProbe(url) {
+  const at = Date.now();
+  try {
+    const r = await fetch(url, { redirect: "follow", headers: { "User-Agent": LOOT_PROBE_UA, Accept: "text/html" }, signal: AbortSignal.timeout(10000) });
+    const text = await r.text();
+    const dead = r.status === 404 || r.status === 410 || (r.ok && !text.trim());
+    return { state: dead ? "dead" : r.ok && /<title/i.test(text) ? "alive" : "unknown", status: r.status, bytes: text.length, at };
+  } catch (err) {
+    return { state: "unknown", status: 0, bytes: 0, at, error: String(err.message).slice(0, 80) };
+  }
+}
+
+function lootShort(u) {
+  return String(u || "").replace(/^https?:\/\/[^/]+\//, "");
+}
+
+function lootNotify(content) {
+  if (!FREE_LOG_CHANNEL_ID || !DISCORD_BOT_TOKEN) return;
+  discordApi(`/channels/${FREE_LOG_CHANNEL_ID}/messages`, "POST", { allowed_mentions: { parse: [] }, content }).catch((err) =>
+    console.error("loot notify failed:", err.message)
+  );
+}
+
+async function healLootLinks(links) {
+  if (!links.some((u) => lootState(u) === "alive")) {
+    if (links.some((u) => lootState(u) === "dead") && Date.now() - lootAllDownAt > 2 * 3600e3) {
+      lootAllDownAt = Date.now();
+      lootNotify("⚠️ ลิงก์ Lootlabs ของคีย์ฟรีเปิดไม่ได้ทุกอัน น่าจะเป็นที่ฝั่ง Lootlabs ระบบจะเช็คใหม่ทุก 3 นาที");
+    }
+    return;
+  }
+  for (let i = 0; i < links.length; i++) {
+    if (lootState(links[i]) !== "dead" || Date.now() - (lootHealAt[i] || 0) < LOOT_HEAL_GAP_MS) continue;
+    lootHealHist[i] = (lootHealHist[i] || []).filter((t) => Date.now() - t < 24 * 3600e3);
+    if (lootHealHist[i].length >= 4) {
+      if (Date.now() - (lootCapNotified[i] || 0) > 12 * 3600e3) {
+        lootCapNotified[i] = Date.now();
+        lootNotify(
+          `⚠️ ลิงก์ Lootlabs checkpoint ${i + 1}/${FREE_STEPS} เสียซ้ำ ${lootHealHist[i].length} ครั้งใน 24 ชม. ระบบหยุดสร้างลิงก์ใหม่อัตโนมัติไว้ก่อน และพาคนไปลิงก์ที่ยังใช้ได้แทน (คีย์ฟรียังรับได้ปกติ) ควรถาม Lootlabs ว่าทำไมลิงก์โดนปิด`
+        );
+      }
+      continue;
+    }
+    lootHealAt[i] = Date.now();
+    lootHealHist[i].push(Date.now());
+    const old = links[i];
+    let fresh = null;
+    let error = null;
+    try {
+      fresh = lootDomain(await createLootLink(i));
+      await new Promise((r) => setTimeout(r, 3000));
+      lootHealth.set(fresh, await lootProbe(fresh));
+      lootLinks = links.slice();
+      lootLinks[i] = fresh;
+      links[i] = fresh;
+      if (!env("LOOTLABS_LINKS")) await db("shop_meta", { method: "POST", body: { k: "lootlabs_links", v: JSON.stringify(lootLinks) }, prefer: "resolution=merge-duplicates" });
+    } catch (err) {
+      error = String(err.message).slice(0, 200);
+      console.error("loot heal:", error);
+    }
+    lootHealLog.unshift({ at: new Date().toISOString(), step: i + 1, old, fresh, fresh_state: fresh ? lootState(fresh) : null, error });
+    lootHealLog.length = Math.min(lootHealLog.length, 20);
+    lootNotify(
+      fresh
+        ? `♻️ ลิงก์ Lootlabs checkpoint ${i + 1}/${FREE_STEPS} เสีย (\`${lootShort(old)}\`) ระบบสร้างลิงก์ใหม่แทนให้แล้ว: \`${lootShort(fresh)}\` ไม่ต้องทำอะไร`
+        : `⚠️ ลิงก์ Lootlabs checkpoint ${i + 1}/${FREE_STEPS} เสีย และสร้างลิงก์ใหม่ไม่สำเร็จ (${error}) ระหว่างนี้ระบบพาคนไปลิงก์ที่ยังใช้ได้แทน จะลองสร้างใหม่อีกครั้งใน 1 ชม.`
+    );
+  }
+}
+
+async function checkLootLinks(heal = true) {
+  if (FREE_PROVIDER !== "lootlabs" || !LOOTLABS_TOKEN) return null;
+  if (!lootCheckPending) {
+    lootCheckPending = (async () => {
+      const links = await getLootLinks();
+      for (const u of new Set(links)) lootHealth.set(u, await lootProbe(u));
+      if (heal) await healLootLinks(links);
+      return links.map((u) => ({ url: u, ...(lootHealth.get(u) || {}) }));
+    })().finally(() => {
+      lootCheckPending = null;
+    });
+  }
+  return lootCheckPending;
+}
+
+async function lootLinkFor(links, s) {
+  const want = links[s.step];
+  const retry = s.lastLinkStep === s.step && Date.now() - (s.lastLinkAt || 0) < 20 * 60 * 1000;
+  const h = lootHealth.get(want);
+  if (retry && (!h || Date.now() - h.at > 10 * 1000)) {
+    lootHealth.set(want, await lootProbe(want));
+    if (lootState(want) === "dead") checkLootLinks().catch((err) => console.error("loot check:", err.message));
+  }
+  s.lastLinkStep = s.step;
+  s.lastLinkAt = Date.now();
+  if (lootState(want) !== "dead") return want;
+  const alt = links.find((u) => u !== want && lootState(u) === "alive") || links.find((u) => u !== want && lootState(u) !== "dead");
+  if (!alt) return want;
+  freeStats.fallback++;
+  return alt;
 }
 
 // Only a logged-in Discord account gets its running key back. Matching by IP handed one person's
@@ -801,6 +923,7 @@ async function handleFreeStart(req, res, cors) {
   }
   const fresh = crypto.randomBytes(18).toString("base64url");
   freeSessions.set(fresh, { tag, step: 0, nonce: null, issuedAt: 0, created: Date.now() });
+  freeStats.start++;
   send(res, 200, { ok: true, sid: fresh, step: 0, steps: FREE_STEPS, hours: FREE_HOURS, provider: FREE_PROVIDER }, cors);
 }
 
@@ -836,9 +959,10 @@ async function handleFreeLink(req, res, cors) {
     enc = decodeURIComponent(enc);
   } catch {}
   enc = encodeURIComponent(enc);
+  const base = await lootLinkFor(links, s);
+  bump(freeStats.link, s.step);
   s.nonce = nonce;
   s.issuedAt = Date.now();
-  const base = links[s.step];
   send(res, 200, { ok: true, url: `${base}${base.includes("?") ? "&" : "?"}data=${enc}`, step: s.step, steps: FREE_STEPS }, cors);
 }
 
@@ -871,16 +995,20 @@ async function handleFreeVerify(req, res, cors) {
     if (!good) return send(res, 400, { ok: false, error: "Linkvertise ไม่ยืนยันว่าผ่านจริง (ห้ามใช้ตัวข้ามลิงก์) ทำ checkpoint นี้ใหม่อีกครั้ง", step: s.step, steps: FREE_STEPS }, cors);
   } else {
     if (!s.nonce || !safeEqual(clean(body.c, 64), s.nonce)) {
+      bump(freeStats.bad, s.step);
       return send(res, 400, { ok: false, error: "ลิงก์นี้ใช้ไม่ได้ ทำ checkpoint ใหม่อีกครั้ง", step: s.step, steps: FREE_STEPS }, cors);
     }
     s.nonce = null;
   }
   if (Date.now() - s.issuedAt < FREE_MIN_SECONDS * 1000) {
+    bump(freeStats.fast, s.step);
     return send(res, 400, { ok: false, error: "ผ่านเร็วผิดปกติ ทำ checkpoint นี้ใหม่อีกครั้ง", step: s.step, steps: FREE_STEPS }, cors);
   }
+  bump(freeStats.ok, s.step);
   s.step += 1;
   if (s.step < FREE_STEPS) return send(res, 200, { ok: true, step: s.step, steps: FREE_STEPS }, cors);
   freeSessions.delete(sid);
+  freeStats.keys++;
   const who = await freeUser(req);
   const k = await issueFreeKey(s.tag, who);
   send(res, 200, { ok: true, done: true, key: k.key, expires_at: k.expires_at, hours: FREE_HOURS, linked: !!who.did }, cors);
@@ -1708,8 +1836,23 @@ async function handleAdmin(req, res, cors, path, url) {
       lootLinks = env("LOOTLABS_LINKS").split(",").map((s) => s.trim()).filter(Boolean);
       return send(res, 200, { ok: true, cleared: true }, cors);
     }
+    const checked = url.searchParams.get("check") ? await checkLootLinks(url.searchParams.get("heal") !== "0") : null;
     const [meta] = await db("shop_meta?select=v&k=eq.lootlabs_links");
-    return send(res, 200, { ok: true, saved: meta ? meta.v : null, memory: lootLinks, env: !!env("LOOTLABS_LINKS") }, cors);
+    return send(
+      res,
+      200,
+      {
+        ok: true,
+        saved: meta ? meta.v : null,
+        memory: lootLinks,
+        env: !!env("LOOTLABS_LINKS"),
+        checked,
+        health: Object.fromEntries([...lootHealth].map(([u, h]) => [lootShort(u), { ...h, at: new Date(h.at).toISOString() }])),
+        heal_log: lootHealLog,
+        stats: freeStats,
+      },
+      cors
+    );
   }
   if (req.method === "GET" && path === "/api/admin/keys") {
     const term = clean(url.searchParams.get("q"), 60);
@@ -3379,7 +3522,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "website-card-2" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "loot-heal-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
@@ -3422,6 +3565,8 @@ http
     console.log(`ZeroHub API on :${PORT}`);
     startGateway();
     setTimeout(() => loadUpdLog().catch(() => {}), 5000).unref();
+    setTimeout(() => checkLootLinks().catch((err) => console.error("loot check:", err.message)), 20 * 1000).unref();
+    setInterval(() => checkLootLinks().catch((err) => console.error("loot check:", err.message)), 3 * 60 * 1000).unref();
     setTimeout(() => sweepBuyerRoles().catch(() => {}), 2 * 60 * 1000).unref();
     setInterval(() => sweepBuyerRoles().catch(() => {}), 15 * 60 * 1000).unref();
     setInterval(() => dailySummaryTick().catch((err) => console.error("daily summary:", err.message)), 5 * 60 * 1000).unref();
