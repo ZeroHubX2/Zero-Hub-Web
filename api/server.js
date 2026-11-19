@@ -37,6 +37,11 @@ const SCRIPT_FILES = (() => {
 const TRUEMONEY_PHONE = env("TRUEMONEY_PHONE").replace(/\D/g, "");
 const ADMIN_TOKEN = env("ADMIN_TOKEN");
 const SHOP_URL = env("SHOP_URL", "https://zerohub-shop.pages.dev");
+// Cloudflare Worker ที่ส่งไฟล์สคริปต์ (ไม่ตั้ง = ส่งผ่าน Render แบบเดิม)
+const CDN_URL = env("CDN_URL").replace(/\/+$/, "");
+const CDN_SECRET = env("CDN_SECRET");
+// รูปแบนเนอร์บอทเก็บบน Cloudflare Pages (bandwidth ฟรี)
+const ASSET_BASE = env("ASSET_BASE", `${SHOP_URL}/assets`).replace(/\/+$/, "");
 const TRUEMONEY_BASE = env("TRUEMONEY_BASE", "https://gift.truemoney.com").replace(/\/+$/, "");
 const TRUEMONEY_PROXY_SECRET = env("TRUEMONEY_PROXY_SECRET");
 const SESSION_SECRET = env("SESSION_SECRET") || crypto.createHash("sha256").update(`zh-session:${SUPABASE_KEY}`).digest("hex");
@@ -503,6 +508,13 @@ async function handleKeyScript(req, res, url) {
   const r = await useKey(key, hwid);
   if (r.status !== "ok") return sendText(res, 200, `ZHERR:${KEY_STATUS_TEXT[r.status] || r.status}`);
   try {
+    // โหลดผ่าน CDN (Cloudflare Worker) เพื่อไม่ให้ไฟล์ใหญ่กิน bandwidth ของ Render
+    if (CDN_URL && CDN_SECRET && url.searchParams.get("cdn") === "1") {
+      const k = await getKey(key);
+      const exp = Math.floor(Date.now() / 1000) + 60;
+      const sig = crypto.createHmac("sha256", CDN_SECRET).update(`${file}|${exp}`).digest("base64url");
+      return sendText(res, 200, `ZHCDN:${CDN_URL}/s?f=${q(file)}&e=${exp}&s=${sig}\n--ZHS:${k.id}.${signSession(k.id, hwid)}`);
+    }
     const src = await fetchRepoFile(file);
     const k = await getKey(key);
     sendText(res, 200, `--ZHS:${k.id}.${signSession(k.id, hwid)}\n${src}`);
@@ -2610,7 +2622,7 @@ async function panelMessage(given) {
               text("# ZERO HUB"),
               text("**Script & Tools** — คีย์เดียว เล่นได้ทุกเกม · One key, every game\n-# ได้คีย์ทันที 24 ชม. · Instant delivery 24/7"),
             ],
-            accessory: { type: 11, media: { url: `${PUBLIC_URL}/assets/panel-logo.png?v=2` } },
+            accessory: { type: 11, media: { url: `${ASSET_BASE}/panel-logo.png?v=2` } },
           },
           line(true),
           text(`**💳 แพ็กเกจคีย์ · Key Plans**\n${priceText}${priceTextEn ? `\n-# 🇬🇧 ${priceTextEn}` : ""}\n-# ⏱️ เวลาเริ่มนับตอนใส่คีย์ครั้งแรก · Time starts on first use`),
@@ -2618,7 +2630,7 @@ async function panelMessage(given) {
           line(),
           text("**🧰 จัดการคีย์ของคุณ · Manage your key**"),
           row(btn("คีย์ของฉัน · My Keys", "📋", 2, "zh:info"), btn("ย้ายเครื่อง · HWID", "🔄", 2, "zh:reset"), btn("เกม · Games", "🎮", 2, "zh:games")),
-          { type: 12, items: [{ media: { url: `${PUBLIC_URL}/assets/panel-banner.gif?v=4` } }] },
+          { type: 12, items: [{ media: { url: `${ASSET_BASE}/panel-banner.gif?v=4` } }] },
           text("-# 🔐 ทุกปุ่มตอบกลับให้เห็นเฉพาะคุณ · Replies are only visible to you\n-# 🌐 ตอบเป็นภาษาไทยหรืออังกฤษตามภาษาที่ตั้งใน Discord · Replies follow your Discord language"),
           row(btn("คีย์ฟรี · Free Key", "🔑", 5, `${SHOP_URL}/getkey`), btn("เว็บร้าน · Shop", "🌐", 5, SHOP_URL), btn("Discord", "💬", 5, DISCORD_INVITE)),
         ],
@@ -2980,7 +2992,7 @@ function updGame(id) {
 }
 function updImageUrl(d) {
   if (d.image) return d.image.url;
-  if (d.game === "all") return `${PUBLIC_URL}/assets/panel-banner.gif?v=4`;
+  if (d.game === "all") return `${ASSET_BASE}/panel-banner.gif?v=4`;
   return `${SHOP_URL}/games/${d.game}.webp`;
 }
 function updLink(e) {
@@ -3013,7 +3025,7 @@ function updateMessage(d, imageRef) {
         text(`## ${d.emoji || g.e} ${g.n} - อัปเดต [${d.version}]`),
         text(`${ty.e} **${ty.th}** · ${st.e} ${st.th}\n-# 📅 <t:${ts}:D> · <t:${ts}:R>${ping ? `\n${ping}` : ""}`),
       ],
-      accessory: { type: 11, media: { url: `${PUBLIC_URL}/assets/panel-logo.png?v=2` } },
+      accessory: { type: 11, media: { url: `${ASSET_BASE}/panel-logo.png?v=2` } },
     },
   ];
   if (f.intro && f.intro.trim()) parts.push(text(`>>> ${f.intro.trim().slice(0, 600)}`));
@@ -3346,9 +3358,9 @@ async function websiteMessage(given) {
               text("# ZERO HUB SHOP"),
               text(`ร้านคีย์สคริปต์ Roblox ของ Zero Hub · Official key store\n-# ⚡ ได้คีย์ทันที 24 ชม. · 🔐 ล็อกอินด้วย Discord ได้ · 🇹🇭 / 🇬🇧 สองภาษา`),
             ],
-            accessory: { type: 11, media: { url: `${PUBLIC_URL}/assets/panel-logo.png?v=2` } },
+            accessory: { type: 11, media: { url: `${ASSET_BASE}/panel-logo.png?v=2` } },
           },
-          { type: 12, items: [{ media: { url: `${PUBLIC_URL}/assets/panel-banner.gif?v=4` }, description: "Zero Hub Shop" }] },
+          { type: 12, items: [{ media: { url: `${ASSET_BASE}/panel-banner.gif?v=4` }, description: "Zero Hub Shop" }] },
           line(true),
           text("### 🧭 เมนูในเว็บ · What you can do"),
           page("🛒", "ซื้อคีย์ · Buy Keys", "เลือกแพ็กเกจ ใส่โค้ดส่วนลดได้ ได้คีย์ทันทีหลังจ่าย", "ร้านค้า", `${SHOP_URL}/shop`),
@@ -3522,7 +3534,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "loot-heal-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "cdn-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
