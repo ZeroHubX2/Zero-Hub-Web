@@ -27,6 +27,7 @@ const GAMES = [
   { name: "⚔️ Attack on Titan Revolution", value: "aotr" },
   { name: "🕷️ Venom Evolution", value: "venom" },
   { name: "🍖 Throw Food For Animals", value: "throwfood" },
+  { name: "🏍️ Mahanakhon Racing", value: "mahanakhon" },
 ];
 
 const UPDATE_TYPES = [
