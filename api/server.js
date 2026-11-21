@@ -27,6 +27,7 @@ const SCRIPT_FILES = (() => {
     aotr: "aotr.lua",
     venom: "venom.lua",
     throwfood: "throwfood.lua",
+    mahanakhon: "mahanakhon.lua",
   };
   try {
     return { ...defaults, ...JSON.parse(env("SCRIPT_FILES", "{}")) };
@@ -2572,6 +2573,7 @@ const PANEL_GAMES = [
   ["⚔️", "Attack on Titan Revolution"],
   ["🕷️", "Venom Evolution"],
   ["🍖", "Throw Food For Animals"],
+  ["🏍️", "Mahanakhon Racing"],
 ];
 
 function btn(label, emoji, style, id) {
@@ -2851,6 +2853,7 @@ const UPDATE_GAMES = [
   { id: "aotr", e: "⚔️", n: "Attack on Titan Revolution" },
   { id: "venom", e: "🕷️", n: "Venom Evolution" },
   { id: "throwfood", e: "🍖", n: "Throw Food For Animals" },
+  { id: "mahanakhon", e: "🏍️", n: "Mahanakhon Racing" },
 ];
 const UPDATE_TYPES = {
   major: { e: "🚀", th: "อัปเดตใหญ่", en: "Major Update", color: 0x8b5cf6 },
@@ -3534,7 +3537,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "cdn-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "mahanakhon-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
