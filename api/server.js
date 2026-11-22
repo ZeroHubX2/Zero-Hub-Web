@@ -796,7 +796,7 @@ async function healLootLinks(links) {
 }
 
 async function checkLootLinks(heal = true) {
-  if (FREE_PROVIDER !== "lootlabs" || !LOOTLABS_TOKEN) return null;
+  if (FREE_ENDED || FREE_PROVIDER !== "lootlabs" || !LOOTLABS_TOKEN) return null;
   if (!lootCheckPending) {
     lootCheckPending = (async () => {
       const links = await getLootLinks();
@@ -922,7 +922,11 @@ async function freeIsOpen() {
   }
   return freeOpenCache.v;
 }
+// 2026-11-22: ปิดคีย์ฟรีถาวร (ไม่แจกคีย์ใหม่) — คีย์ที่แจกไปแล้วยังใช้ได้จนหมดอายุ
+const FREE_ENDED = true;
+const FREE_ENDED_TEXT = "ปิดระบบคีย์ฟรีแล้ว ซื้อคีย์ที่ร้านได้เลยครับ";
 async function freeGate(res, cors) {
+  if (FREE_ENDED) return send(res, 410, { ok: false, closed: true, error: FREE_ENDED_TEXT }, cors);
   if (!FREE_TOKEN) return freeOff(res, cors);
   if (!(await freeIsOpen())) return send(res, 503, { ok: false, maintenance: true, error: FREE_CLOSED_TEXT }, cors);
   return null;
@@ -2651,7 +2655,7 @@ async function panelMessage(given) {
           row(btn("คีย์ของฉัน · My Keys", "📋", 2, "zh:info"), btn("ย้ายเครื่อง · HWID", "🔄", 2, "zh:reset"), btn("เกม · Games", "🎮", 2, "zh:games")),
           { type: 12, items: [{ media: { url: `${ASSET_BASE}/panel-banner.gif?v=4` } }] },
           text("-# 🔐 ทุกปุ่มตอบกลับให้เห็นเฉพาะคุณ · Replies are only visible to you\n-# 🌐 ตอบเป็นภาษาไทยหรืออังกฤษตามภาษาที่ตั้งใน Discord · Replies follow your Discord language"),
-          row(btn("คีย์ฟรี · Free Key", "🔑", 5, `${SHOP_URL}/getkey`), btn("เว็บร้าน · Shop", "🌐", 5, SHOP_URL), btn("Discord", "💬", 5, DISCORD_INVITE)),
+          row(btn("ซื้อคีย์ · Buy Key", "🛒", 5, `${SHOP_URL}/shop`), btn("เว็บร้าน · Shop", "🌐", 5, SHOP_URL), btn("Discord", "💬", 5, DISCORD_INVITE)),
         ],
       },
     ],
@@ -2794,8 +2798,8 @@ async function handlePanelButton(res, body) {
             : []),
           T(
             L,
-            `ยังไม่มีคีย์? 🎁 [รับคีย์ฟรี](${SHOP_URL}/getkey) (6 ชม.) หรือ 🛒 [ซื้อคีย์](${SHOP_URL}/shop)`,
-            `No key yet? 🎁 [Get a free key](${SHOP_URL}/getkey) (6 h) or 🛒 [buy one](${SHOP_URL}/shop)`
+            `ยังไม่มีคีย์? 🛒 [ซื้อคีย์ที่ร้าน](${SHOP_URL}/shop)`,
+            `No key yet? 🛒 [Buy one in the shop](${SHOP_URL}/shop)`
           ),
           T(
             L,
@@ -3075,7 +3079,7 @@ function updateMessage(d, imageRef) {
   const buttons = [btn("รับสคริปต์ · Script", "📜", 3, "zh:script"), btn("ประวัติอัปเดต · History", "🗂️", 2, `zh:upd:h:${g.id}`)];
   if (DISCORD_UPDATE_ROLE_ID) buttons.push(btn("รับแจ้งเตือน · Notify", "🔔", 2, "zh:upd:bell"));
   parts.push(row(...buttons));
-  parts.push(row(btn("ซื้อคีย์ · Buy", "🛒", 5, `${SHOP_URL}/shop`), btn("คีย์ฟรี · Free Key", "🎁", 5, `${SHOP_URL}/getkey`)));
+  parts.push(row(btn("ซื้อคีย์ · Buy", "🛒", 5, `${SHOP_URL}/shop`), btn("เติมเงิน · Top up", "💰", 5, `${SHOP_URL}/topup`)));
   return {
     container: { type: 17, accent_color: ty.color, components: parts },
     ping,
@@ -3396,7 +3400,6 @@ async function websiteMessage(given) {
           page("🛒", "ซื้อคีย์ · Buy Keys", "เลือกแพ็กเกจ ใส่โค้ดส่วนลดได้ ได้คีย์ทันทีหลังจ่าย", "ร้านค้า", `${SHOP_URL}/shop`),
           page("💰", "เติมเงิน · Top up", "ซองอั่งเปา TrueMoney หรือโอนธนาคาร + แนบสลิป ตรวจอัตโนมัติ", "เติมเงิน", `${SHOP_URL}/topup`),
           page("🔑", "คีย์ของฉัน · My Keys", "ดูวันหมดอายุ · รีเซ็ต HWID ย้ายเครื่อง · ประวัติการซื้อ", "คีย์ของฉัน", `${SHOP_URL}/account`),
-          page("🎁", "คีย์ฟรี · Free Key", "ผ่าน 2 ด่าน รับคีย์ฟรี 6 ชม. เล่นได้ครบทุกฟีเจอร์", "รับคีย์ฟรี", `${SHOP_URL}/getkey`),
           page("📖", "วิธีใช้ · How to use", "สอนตั้งแต่สมัคร เติมเงิน ซื้อคีย์ จนรันสคริปต์ในเกม", "วิธีใช้", `${SHOP_URL}/howto`),
           page("📜", "รับสคริปต์ · Get Script", "ตัวโหลดเดียว ใช้ได้ทุกเกม · กดแล้วได้สคริปต์ (เห็นแค่คุณ)", "รับสคริปต์", "zh:script"),
           line(),
@@ -3564,7 +3567,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "kaitan-bot-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "free-off-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
