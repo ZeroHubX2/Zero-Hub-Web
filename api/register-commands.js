@@ -28,6 +28,7 @@ const GAMES = [
   { name: "🕷️ Venom Evolution", value: "venom" },
   { name: "🍖 Throw Food For Animals", value: "throwfood" },
   { name: "🏍️ Mahanakhon Racing", value: "mahanakhon" },
+  { name: "🐔 AoT:R ไก่ตัน", value: "aotrkt" },
 ];
 
 const UPDATE_TYPES = [

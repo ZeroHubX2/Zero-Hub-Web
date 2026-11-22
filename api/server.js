@@ -2588,7 +2588,10 @@ const PANEL_GAMES = [
   ["🕷️", "Venom Evolution"],
   ["🍖", "Throw Food For Animals"],
   ["🏍️", "Mahanakhon Racing"],
+  ["🐔", "AoT:R ไก่ตัน (ทดสอบฟรี)"],
 ];
+// ไก่ตัน config shown in Get Script (needs the main key + the ไก่ตัน key)
+const KAITAN_CONFIG = `getgenv().ZeroHub = { Key = "คีย์หลักของคุณ", KaitanKey = "${KAITAN_FREE_KEY}", LoaderUI = false, Kaitan = true }\n${LOADSTRING}`;
 
 function btn(label, emoji, style, id) {
   const b = { type: 2, style, label, emoji: { name: emoji } };
@@ -2780,6 +2783,15 @@ async function handlePanelButton(res, body) {
             "**วิธีใช้:** เข้าเกมที่รองรับ → รันใน executor → ใส่คีย์ในหน้าต่างโหลดเดอร์ (ใส่ครั้งเดียว ครั้งต่อไปจำให้เอง)",
             "**How to use:** join a supported game → run it in your executor → enter your key in the loader window (only once, it is remembered)"
           ),
+          ...(KAITAN_FREE
+            ? [
+                "",
+                T(L, "🐔 **AoT:R ไก่ตัน (ทดสอบฟรี)** — ต้องมีคีย์หลัก (ฟรีหรือซื้อ) + คีย์ไก่ตัน", "🐔 **AoT:R Kaitan (free test)** — needs your main key (free or bought) + the Kaitan key"),
+                "```lua",
+                KAITAN_CONFIG,
+                "```",
+              ]
+            : []),
           T(
             L,
             `ยังไม่มีคีย์? 🎁 [รับคีย์ฟรี](${SHOP_URL}/getkey) (6 ชม.) หรือ 🛒 [ซื้อคีย์](${SHOP_URL}/shop)`,
@@ -2868,6 +2880,7 @@ const UPDATE_GAMES = [
   { id: "venom", e: "🕷️", n: "Venom Evolution" },
   { id: "throwfood", e: "🍖", n: "Throw Food For Animals" },
   { id: "mahanakhon", e: "🏍️", n: "Mahanakhon Racing" },
+  { id: "aotrkt", e: "🐔", n: "AoT:R ไก่ตัน" },
 ];
 const UPDATE_TYPES = {
   major: { e: "🚀", th: "อัปเดตใหญ่", en: "Major Update", color: 0x8b5cf6 },
@@ -3551,7 +3564,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "kaitan-free-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "kaitan-bot-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
