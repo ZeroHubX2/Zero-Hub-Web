@@ -28,6 +28,7 @@ const SCRIPT_FILES = (() => {
     venom: "venom.lua",
     throwfood: "throwfood.lua",
     mahanakhon: "mahanakhon.lua",
+    aotrkt: "aotrkt.lua",
   };
   try {
     return { ...defaults, ...JSON.parse(env("SCRIPT_FILES", "{}")) };
@@ -39,6 +40,14 @@ const TRUEMONEY_PHONE = env("TRUEMONEY_PHONE").replace(/\D/g, "");
 const ADMIN_TOKEN = env("ADMIN_TOKEN");
 const SHOP_URL = env("SHOP_URL", "https://zerohub-shop.pages.dev");
 // Cloudflare Worker ที่ส่งไฟล์สคริปต์ (ไม่ตั้ง = ส่งผ่าน Render แบบเดิม)
+// AoT:R ไก่ตัน: game=aotrkt needs a valid main key AND this ไก่ตัน key (free test: one shared
+// key). KAITAN_FREE=0 closes it (no ไก่ตัน key is accepted until the paid model exists).
+const KAITAN_FREE = env("KAITAN_FREE", "1") !== "0";
+const KAITAN_FREE_KEY = env("KAITAN_FREE_KEY", "ZH ไก่ตันfree");
+function isKaitanFreeKey(key) {
+  const norm = (s) => String(s || "").replace(/\s+/g, "").toUpperCase();
+  return KAITAN_FREE && norm(key) !== "" && norm(key) === norm(KAITAN_FREE_KEY);
+}
 const CDN_URL = env("CDN_URL").replace(/\/+$/, "");
 const CDN_SECRET = env("CDN_SECRET");
 // รูปแบนเนอร์บอทเก็บบน Cloudflare Pages (bandwidth ฟรี)
@@ -506,6 +515,11 @@ async function handleKeyScript(req, res, url) {
   const file = game !== "loader" && Object.prototype.hasOwnProperty.call(SCRIPT_FILES, game) ? SCRIPT_FILES[game] : null;
   if (!file) return sendText(res, 200, "ZHERR:ไม่รองรับเกมนี้");
   if (!key || hwid.length < 4) return sendText(res, 200, `ZHERR:${KEY_STATUS_TEXT.invalid}`);
+  // ไก่ตัน needs BOTH: a valid main key (free ZHFREE- or bought ZH-, checked below like every
+  // game, HWID-locked) and the ไก่ตัน key in &kkey= (free test: the shared key)
+  if (game === "aotrkt" && !isKaitanFreeKey(url.searchParams.get("kkey"))) {
+    return sendText(res, 200, "ZHERR:คีย์ไก่ตันไม่ถูกต้อง (ช่วงทดสอบฟรีใช้ ZH ไก่ตันfree)");
+  }
   const r = await useKey(key, hwid);
   if (r.status !== "ok") return sendText(res, 200, `ZHERR:${KEY_STATUS_TEXT[r.status] || r.status}`);
   try {
@@ -3537,7 +3551,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "mahanakhon-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "kaitan-free-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
