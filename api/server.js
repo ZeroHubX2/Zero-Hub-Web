@@ -109,6 +109,7 @@ const loaderLimited = limiter(60, 10 * 60 * 1000);
 const webKeyLimited = limiter(30, 10 * 60 * 1000);
 const redeemLimited = limiter(6, 10 * 60 * 1000);
 const sessionLimited = limiter(120, 10 * 60 * 1000);
+const coreLimited = limiter(30, 10 * 60 * 1000);
 const userLimited = limiter(60, 10 * 60 * 1000);
 const adminFailLimited = limiter(10, 15 * 60 * 1000);
 
@@ -556,6 +557,33 @@ async function handleKeySession(req, res, url) {
   else if (k.expires_at && new Date(k.expires_at).getTime() <= Date.now()) status = "expired";
   if (status !== "ok") return send(res, 200, { ok: false, status, error: KEY_STATUS_TEXT[status] });
   send(res, 200, { ok: true, status, expires_at: k.expires_at, lifetime: k.hours === null });
+}
+
+// ---- Fast compute cores: plain Luau parts of a script that must run outside the obfuscator's VM
+// (Anime Crusaders X auto play maths). Served only for a valid key session (same signed token +
+// HWID + key status as /api/key/session), from the private scripts repo, so a core can be updated
+// without a new obfuscated build.
+const CORE_FILES = { acx: "acx_core.lua" };
+
+async function handleCore(req, res, url) {
+  if (denyBrowser(req, res)) return;
+  if (coreLimited(clientIp(req))) return sendText(res, 429, "");
+  const token = clean(url.searchParams.get("t"), 200);
+  const hwid = normHwid(url.searchParams.get("hwid"));
+  const game = clean(url.searchParams.get("game"), 40).toLowerCase();
+  const file = Object.prototype.hasOwnProperty.call(CORE_FILES, game) ? CORE_FILES[game] : null;
+  const m = token.match(/^(\d{1,15})\.([A-Za-z0-9_-]{43})$/);
+  if (!file || !m || hwid.length < 4 || !safeEqual(m[2], signSession(m[1], hwid))) return sendText(res, 403, "");
+  const [k] = await db(`keys?select=*&id=eq.${m[1]}`);
+  if (!k || k.revoked || k.hwid !== hwid || (k.expires_at && new Date(k.expires_at).getTime() <= Date.now())) {
+    return sendText(res, 403, "");
+  }
+  try {
+    sendText(res, 200, await fetchRepoFile(file));
+  } catch (err) {
+    console.error("core fetch failed:", err.message);
+    sendText(res, 503, "");
+  }
 }
 
 async function handleLoader(req, res) {
@@ -3570,13 +3598,14 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "acx-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "acx-core-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
   if (m === "GET" && path === "/api/key/check") return handleKeyCheck(req, res, url);
   if (m === "GET" && path === "/api/key/script") return handleKeyScript(req, res, url);
   if (m === "GET" && path === "/api/key/session") return handleKeySession(req, res, url);
+  if (m === "GET" && path === "/api/core") return handleCore(req, res, url);
   if (m === "GET" && path === "/api/key/tiers") return handleTiers(req, res, cors);
   if (m === "GET" && path === "/api/stats") return handleStats(req, res, cors);
   if (m === "POST" && path === "/api/key/info") return handleKeyInfo(req, res, cors);
