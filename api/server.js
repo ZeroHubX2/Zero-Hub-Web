@@ -28,6 +28,7 @@ const SCRIPT_FILES = (() => {
     venom: "venom.lua",
     throwfood: "throwfood.lua",
     mahanakhon: "mahanakhon.lua",
+    acx: "acx.lua",
     aotrkt: "aotrkt.lua",
   };
   try {
@@ -2592,6 +2593,7 @@ const PANEL_GAMES = [
   ["🕷️", "Venom Evolution"],
   ["🍖", "Throw Food For Animals"],
   ["🏍️", "Mahanakhon Racing"],
+  ["🗡️", "Anime Crusaders X"],
   ["🐔", "AoT:R ไก่ตัน (ทดสอบฟรี)"],
 ];
 // ไก่ตัน config shown in Get Script (needs the main key + the ไก่ตัน key)
@@ -2884,6 +2886,7 @@ const UPDATE_GAMES = [
   { id: "venom", e: "🕷️", n: "Venom Evolution" },
   { id: "throwfood", e: "🍖", n: "Throw Food For Animals" },
   { id: "mahanakhon", e: "🏍️", n: "Mahanakhon Racing" },
+  { id: "acx", e: "🗡️", n: "Anime Crusaders X" },
   { id: "aotrkt", e: "🐔", n: "AoT:R ไก่ตัน" },
 ];
 const UPDATE_TYPES = {
@@ -3567,7 +3570,7 @@ async function route(req, res) {
     res.writeHead(204, cors);
     return res.end();
   }
-  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "free-off-1" }, cors);
+  if (m === "GET" && path === "/") return send(res, 200, { ok: true, service: "zerohub-api", build: "acx-1" }, cors);
   if (m === "GET" && path.startsWith("/assets/")) return handleAsset(req, res, path.slice(8));
   if (m === "POST" && path === "/api/contact") return handleContact(req, res, cors);
   if (m === "GET" && path === "/api/script/ZeroHub") return handleLoader(req, res);
